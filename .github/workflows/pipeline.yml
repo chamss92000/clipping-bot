@@ -55,9 +55,11 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          # --- Bloc 7 ---
-          UPLOADPOST_API_KEY: ${{ secrets.UPLOADPOST_API_KEY }}
-          UPLOADPOST_USER: ${{ secrets.UPLOADPOST_USER }}
+          # --- Bloc 7 (TikTok API officielle) ---
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          TIKTOK_PRIVACY_LEVEL: ${{ vars.TIKTOK_PRIVACY_LEVEL || 'SELF_ONLY' }}
           # --- Tuning ---
           LOG_LEVEL: INFO
           DRY_RUN: ${{ inputs.dry_run }}

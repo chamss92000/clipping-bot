@@ -32,3 +32,6 @@ pipeline.log
 .DS_Store
 .idea/
 .vscode/
+
+oauth_client*
+token*.json

@@ -10,14 +10,14 @@ persiste son état sur **Google Drive**.
 
 | Bloc | Rôle | Stack | Statut |
 |------|------|-------|--------|
-| 1 | Détection tendances | YouTube Data API v3, Twitch Helix, Kick API | ✅ implémenté |
-| 2 | Téléchargement + storage | yt-dlp, Google Drive API | ⏳ à venir |
-| 3 | Transcription | openai-whisper (base, CPU) | ⏳ |
-| 4 | Moments viraux | Gemini 1.5 Flash | ⏳ |
-| 5 | Découpe + recadrage 9:16 | FFmpeg, MediaPipe | ⏳ |
-| 6 | Sous-titres animés | ASS + FFmpeg | ⏳ |
-| 7 | Publication TikTok | Upload-Post (+ fallback API off.) | ⏳ |
-| 8 | Orchestration | GitHub Actions | ✅ squelette |
+| 1 | Détection tendances | YouTube Data API v3, Twitch Helix, Kick API | ✅ |
+| 2 | Téléchargement + storage | yt-dlp, Google Drive API (OAuth drive.file) | ✅ |
+| 3 | Transcription | openai-whisper (base, CPU) | ✅ |
+| 4 | Moments viraux | Gemini (gemini-flash-latest) | ✅ |
+| 5 | Découpe + recadrage 9:16 | FFmpeg + suivi de visage | ✅ |
+| 6 | Sous-titres animés | ASS + FFmpeg | ✅ |
+| 7 | Publication TikTok | API officielle Content Posting (gratuite) | ✅ |
+| 8 | Orchestration | GitHub Actions (cron 6h) | ✅ |
 
 ## Structure
 
@@ -78,8 +78,11 @@ python main.py --detect-only
 
 À définir dans *Settings → Secrets and variables → Actions* :
 `YOUTUBE_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `GEMINI_API_KEY`,
-`GOOGLE_DRIVE_CREDENTIALS` (JSON du service account), `GOOGLE_DRIVE_FOLDER_ID`,
-`UPLOADPOST_API_KEY`, `UPLOADPOST_USER`.
+`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`,
+`TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`.
+
+Auth OAuth (une fois, en local) : `python -m src.storage.authorize` (Drive) et
+`python -m src.publisher.authorize_tiktok` (TikTok).
 
 ## Contraintes
 

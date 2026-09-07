@@ -250,10 +250,24 @@ SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 4)
 
 
 # ---------------------------------------------------------------------------
-# Bloc 7 — Publication TikTok
+# Bloc 7 — Publication TikTok (API officielle Content Posting — gratuite)
 # ---------------------------------------------------------------------------
-UPLOADPOST_BASE_URL: str = _get("UPLOADPOST_BASE_URL", "https://api.upload-post.com")
-UPLOADPOST_MONTHLY_QUOTA: int = _get_int("UPLOADPOST_MONTHLY_QUOTA", 10)
+# Upload-Post free ne permet PAS TikTok => on utilise l'API officielle TikTok.
+TIKTOK_CLIENT_KEY: str | None = _get("TIKTOK_CLIENT_KEY")
+TIKTOK_CLIENT_SECRET: str | None = _get("TIKTOK_CLIENT_SECRET")
+TIKTOK_REFRESH_TOKEN: str | None = _get("TIKTOK_REFRESH_TOKEN")
+#: URI de redirection OAuth (doit être EXACTEMENT celle enregistrée dans l'app TikTok).
+TIKTOK_REDIRECT_URI: str = _get("TIKTOK_REDIRECT_URI", "http://localhost:8888/callback")
+#: Niveau de confidentialité du post. Avant audit de l'app, seul SELF_ONLY (privé)
+#: est autorisé ; après audit, passer à PUBLIC_TO_EVERYONE.
+TIKTOK_PRIVACY_LEVEL: str = _get("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
+TIKTOK_DISABLE_COMMENT: bool = _get_bool("TIKTOK_DISABLE_COMMENT", False)
+TIKTOK_DISABLE_DUET: bool = _get_bool("TIKTOK_DISABLE_DUET", False)
+TIKTOK_DISABLE_STITCH: bool = _get_bool("TIKTOK_DISABLE_STITCH", False)
+TIKTOK_API_BASE: str = _get("TIKTOK_API_BASE", "https://open.tiktokapis.com")
+
+#: Quota mensuel qu'on s'impose (l'API officielle n'a pas de coût, mais on borde).
+PUBLISH_MONTHLY_QUOTA: int = _get_int("PUBLISH_MONTHLY_QUOTA", 60)
 #: Heures de pic (heure locale TIMEZONE) où l'on planifie les publications.
 PUBLISH_HOURS: list[int] = [int(h) for h in _get_list("PUBLISH_HOURS", ["18", "19", "20", "21", "22"])]
 PLATFORM_TARGETS: list[str] = _get_list("PLATFORM_TARGETS", ["tiktok"])
@@ -283,7 +297,7 @@ REQUIRED_BY_BLOCK: dict[str, list[str]] = {
     "download": [],  # credentials Drive gérées par la vérif dédiée ci-dessous
     "drive": [],     # idem (OAuth : GOOGLE_DRIVE_FOLDER_ID est optionnel)
     "viral": ["GEMINI_API_KEY"],
-    "publish": ["UPLOADPOST_API_KEY", "UPLOADPOST_USER"],
+    "publish": ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_REFRESH_TOKEN"],
 }
 
 

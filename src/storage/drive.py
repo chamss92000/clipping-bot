@@ -90,7 +90,7 @@ class State:
         return (when or datetime.now(timezone.utc)).strftime("%Y-%m")
 
     def uploads_left(self, quota: int | None = None) -> int:
-        quota = quota if quota is not None else settings.UPLOADPOST_MONTHLY_QUOTA
+        quota = quota if quota is not None else settings.PUBLISH_MONTHLY_QUOTA
         used = self.uploads_this_month.get(self.month_key(), 0)
         return max(0, quota - used)
 
