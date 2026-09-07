@@ -17,7 +17,9 @@ google-auth-oauthlib==1.2.1           # Flow OAuth local (authorize.py)
 # (google-api-python-client fournit déjà le client Drive v3)
 
 # --- Bloc 3 : Transcription ---
-openai-whisper==20240930              # ASR local CPU (modèle "base")
+# faster-whisper (wheel CTranslate2) : installe sans compilation (openai-whisper
+# casse sur setuptools récent : pkg_resources) et ~4x plus rapide sur CPU.
+faster-whisper                        # ASR local CPU (modèle "base")
 
 # --- Bloc 4 : Détection moments viraux (LLM) ---
 google-generativeai==0.8.3            # Gemini 1.5 Flash

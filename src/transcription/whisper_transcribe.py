@@ -97,13 +97,14 @@ def _load_model(name: str):
     if name in _MODEL_CACHE:
         return _MODEL_CACHE[name]
     try:
-        import whisper  # import tardif : évite de charger torch si le bloc n'est pas utilisé
+        from faster_whisper import WhisperModel  # import tardif
     except ImportError as exc:  # pragma: no cover
-        raise TranscriptionError(
-            "openai-whisper non installé. `pip install openai-whisper` (tire torch)."
-        ) from exc
-    log.info("Whisper: chargement du modèle '%s' sur %s…", name, settings.WHISPER_DEVICE)
-    model = whisper.load_model(name, device=settings.WHISPER_DEVICE)
+        raise TranscriptionError("faster-whisper non installé (`pip install faster-whisper`).") from exc
+    log.info(
+        "Whisper: chargement du modèle '%s' (%s / %s)…",
+        name, settings.WHISPER_DEVICE, settings.WHISPER_COMPUTE_TYPE,
+    )
+    model = WhisperModel(name, device=settings.WHISPER_DEVICE, compute_type=settings.WHISPER_COMPUTE_TYPE)
     _MODEL_CACHE[name] = model
     return model
 
@@ -129,38 +130,36 @@ def transcribe(
 
     log.info("Whisper: transcription de %s (lang=%s)…", media_path.name, language or "auto")
     try:
-        result = model.transcribe(
+        seg_iter, info = model.transcribe(
             str(media_path),
             language=language,
             word_timestamps=True,
-            fp16=False,  # CPU : évite le warning et force le fp32
-            verbose=False,
         )
     except Exception as exc:  # noqa: BLE001
         raise TranscriptionError(f"Échec transcription {media_path.name} : {exc}") from exc
 
     segments: list[Segment] = []
-    for seg in result.get("segments", []):
+    for seg in seg_iter:  # générateur : l'itération déclenche le calcul
         words = [
             Word(
-                start=round(float(w["start"]) + source_offset, 3),
-                end=round(float(w["end"]) + source_offset, 3),
-                word=w["word"],
+                start=round(float(w.start) + source_offset, 3),
+                end=round(float(w.end) + source_offset, 3),
+                word=w.word,
             )
-            for w in seg.get("words", [])
-            if w.get("start") is not None and w.get("end") is not None
+            for w in (seg.words or [])
+            if w.start is not None and w.end is not None
         ]
         segments.append(
             Segment(
-                start=round(float(seg["start"]) + source_offset, 3),
-                end=round(float(seg["end"]) + source_offset, 3),
-                text=seg.get("text", "").strip(),
+                start=round(float(seg.start) + source_offset, 3),
+                end=round(float(seg.end) + source_offset, 3),
+                text=(seg.text or "").strip(),
                 words=words,
             )
         )
 
     transcript = Transcript(
-        language=result.get("language", language or ""),
+        language=getattr(info, "language", language or ""),
         segments=segments,
         source_offset=source_offset,
     )

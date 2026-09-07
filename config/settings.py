@@ -206,6 +206,8 @@ SOURCE_HARD_MAX_DURATION_S: int = _get_int("SOURCE_HARD_MAX_DURATION_S", 0)
 WHISPER_MODEL: str = _get("WHISPER_MODEL", "base")
 WHISPER_LANGUAGE: str | None = _get("WHISPER_LANGUAGE")  # None => autodetect
 WHISPER_DEVICE: str = _get("WHISPER_DEVICE", "cpu")
+#: Type de calcul faster-whisper : "int8" (rapide/CPU), "int8_float16", "float32".
+WHISPER_COMPUTE_TYPE: str = _get("WHISPER_COMPUTE_TYPE", "int8")
 
 
 # ---------------------------------------------------------------------------
