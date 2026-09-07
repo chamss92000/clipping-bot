@@ -257,7 +257,7 @@ TIKTOK_CLIENT_KEY: str | None = _get("TIKTOK_CLIENT_KEY")
 TIKTOK_CLIENT_SECRET: str | None = _get("TIKTOK_CLIENT_SECRET")
 TIKTOK_REFRESH_TOKEN: str | None = _get("TIKTOK_REFRESH_TOKEN")
 #: URI de redirection OAuth (doit être EXACTEMENT celle enregistrée dans l'app TikTok).
-TIKTOK_REDIRECT_URI: str = _get("TIKTOK_REDIRECT_URI", "http://localhost:8888/callback")
+TIKTOK_REDIRECT_URI: str = _get("TIKTOK_REDIRECT_URI", "https://localhost:8888/callback")
 #: Niveau de confidentialité du post. Avant audit de l'app, seul SELF_ONLY (privé)
 #: est autorisé ; après audit, passer à PUBLIC_TO_EVERYONE.
 TIKTOK_PRIVACY_LEVEL: str = _get("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")

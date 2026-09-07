@@ -98,13 +98,22 @@ def main() -> int:
         pass
 
     code: str | None = None
-    if urllib.parse.urlparse(settings.TIKTOK_REDIRECT_URI).hostname in ("localhost", "127.0.0.1"):
+    parsed = urllib.parse.urlparse(settings.TIKTOK_REDIRECT_URI)
+    # Capture auto seulement si redirect = http://localhost (serveur local en clair).
+    # En https (exigé par TikTok), le navigateur ne pourra pas joindre notre serveur
+    # HTTP : on récupère alors le code manuellement depuis la barre d'adresse.
+    if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"):
         try:
             code = _capture_code_localhost()
         except OSError as exc:
             print(f"(serveur local indisponible : {exc})")
     if not code:
-        pasted = input("Colle ici l'URL de redirection complète (ou juste le code) : ").strip()
+        print(
+            "\nAprès avoir autorisé, ton navigateur sera redirigé vers une page qui\n"
+            "n'affiche rien (normal). COPIE l'URL COMPLÈTE dans la barre d'adresse\n"
+            "(elle contient ...?code=XXXX...) et colle-la ci-dessous.\n"
+        )
+        pasted = input("URL de redirection complète (ou juste le code) : ").strip()
         if "code=" in pasted:
             code = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query).get("code", [None])[0]
         else:
