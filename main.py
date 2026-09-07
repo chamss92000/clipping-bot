@@ -44,7 +44,7 @@ def _process_source(cand, storage, state) -> int:
     from src.downloader.download import download_planned
     from src.editing.clip import make_vertical_clip
     from src.editing.subtitles import build_ass, burn_subtitles
-    from src.publisher.tiktok import next_publish_slot, publish
+    from src.publisher.tiktok import build_caption, next_publish_slot, publish
     from src.transcription.whisper_transcribe import transcribe
     from src.viral.gemini_detect import detect_moments
 
@@ -68,7 +68,11 @@ def _process_source(cand, storage, state) -> int:
             if produced >= settings.MAX_CLIPS_PER_RUN:
                 log.info("  Limite MAX_CLIPS_PER_RUN atteinte.")
                 return produced
-            if not settings.DRY_RUN and state.uploads_left() <= 0:
+            if (
+                settings.PUBLISH_MODE == "tiktok_api"
+                and not settings.DRY_RUN
+                and state.uploads_left() <= 0
+            ):
                 log.warning("  Quota mensuel de publication épuisé — arrêt des posts.")
                 return produced
 
@@ -87,13 +91,37 @@ def _process_source(cand, storage, state) -> int:
                 log.error("  Montage échoué (%s @%.0f) : %s", cand.uid, m.start, exc)
                 continue
 
-            # Upload du clip fini sur Drive (archive + preuve).
+            caption = build_caption(m.hook, m.hashtags)
+
+            if settings.PUBLISH_MODE == "manual":
+                # Mode semi-auto : on dépose le clip + un fichier caption prêt à
+                # copier sur Drive ; l'utilisateur publie à la main.
+                cap_file = settings.CLIPS_DIR / f"{base}.txt"
+                cap_file.write_text(caption, encoding="utf-8")
+                try:
+                    storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS)
+                    storage.upload(cap_file, cap_file.name, subdir=settings.DRIVE_SUBDIR_CLIPS)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("  Upload Drive échoué : %s", exc)
+                log.info("  ✅ Clip prêt à publier (manuel) : %s", final_clip.name)
+                state.published.append(
+                    {
+                        "uid": cand.uid,
+                        "clip": final_clip.name,
+                        "hook": m.hook,
+                        "hashtags": m.hashtags,
+                        "status": "ready_manual",
+                    }
+                )
+                produced += 1
+                continue
+
+            # Mode API : upload Drive (archive) puis publication automatique.
             try:
                 storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS)
             except Exception as exc:  # noqa: BLE001
                 log.warning("  Upload Drive du clip échoué : %s", exc)
 
-            # Publication (ou simulation), planifiée à la prochaine heure de pic.
             slot = next_publish_slot()
             res = publish(final_clip, m.hook, m.hashtags, schedule_at=slot)
             state.published.append(

@@ -252,6 +252,13 @@ SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 4)
 # ---------------------------------------------------------------------------
 # Bloc 7 — Publication TikTok (API officielle Content Posting — gratuite)
 # ---------------------------------------------------------------------------
+# Mode de publication :
+#   "manual"     -> le pipeline dépose clip + caption sur Drive, tu postes à la main
+#                   (0€, aucun domaine/audit TikTok requis) — DÉFAUT.
+#   "tiktok_api" -> publication auto via l'API officielle TikTok (nécessite
+#                   domaine vérifié + audit pour le public ; voir authorize_tiktok).
+PUBLISH_MODE: str = _get("PUBLISH_MODE", "manual")
+
 # Upload-Post free ne permet PAS TikTok => on utilise l'API officielle TikTok.
 TIKTOK_CLIENT_KEY: str | None = _get("TIKTOK_CLIENT_KEY")
 TIKTOK_CLIENT_SECRET: str | None = _get("TIKTOK_CLIENT_SECRET")
