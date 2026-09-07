@@ -1,0 +1,80 @@
+name: clipping-pipeline
+
+# Bloc 8 — Orchestration : cron toutes les 6h + déclenchement manuel.
+on:
+  schedule:
+    - cron: "0 */6 * * *"      # 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:
+    inputs:
+      detect_only:
+        description: "Détection seule (dump candidats, pas de traitement)"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Ne rien publier"
+        type: boolean
+        default: true
+
+concurrency:
+  group: clipping-pipeline
+  cancel-in-progress: false   # on ne coupe pas un cycle en cours
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60        # garde-fou sur le budget Actions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -U yt-dlp   # toujours la derniere version (extraction YouTube)
+
+      - name: Run pipeline
+        env:
+          # --- Bloc 1 ---
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          # --- Bloc 4 ---
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # --- Bloc 2 (storage Drive, OAuth headless) ---
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          # --- Bloc 7 ---
+          UPLOADPOST_API_KEY: ${{ secrets.UPLOADPOST_API_KEY }}
+          UPLOADPOST_USER: ${{ secrets.UPLOADPOST_USER }}
+          # --- Tuning ---
+          LOG_LEVEL: INFO
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "${{ inputs.detect_only }}" = "true" ]; then
+            python main.py --detect-only
+          else
+            python main.py
+          fi
+
+      - name: Upload artefacts (logs / candidats) en cas d'échec
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-debug
+          path: |
+            work/candidates.json
+            pipeline.log
+          if-no-files-found: ignore
+          retention-days: 5
