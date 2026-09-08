@@ -142,7 +142,15 @@ def _ydl_opts(dest_dir: Path, outtmpl: str, window: tuple[float, float] | None) 
         "concurrent_fragment_downloads": settings.DOWNLOAD_CONCURRENCY,
         "restrictfilenames": True,
         "ignoreerrors": False,
+        # Contourne la vérification anti-bot de YouTube sur les IP de datacenter
+        # (runners CI) en passant par d'autres clients de lecture.
+        "extractor_args": {"youtube": {"player_client": settings.YTDLP_PLAYER_CLIENTS}},
     }
+    # Secours le plus fiable si YouTube insiste : un fichier cookies.
+    cookies = settings.YOUTUBE_COOKIES_FILE
+    if cookies and Path(cookies).exists():
+        opts["cookiefile"] = cookies
+        log.debug("yt-dlp: cookies YouTube utilisés (%s)", cookies)
     if window is not None:
         start, end = window
         opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(start, end)])

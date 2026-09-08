@@ -99,8 +99,13 @@ LOG_LEVEL: str = _get("LOG_LEVEL", "INFO").upper()
 DRY_RUN: bool = _get_bool("DRY_RUN", False)
 #: Nombre max de candidats retenus par cycle (après agrégation/tri).
 MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 20)
-#: Nombre max de sources RÉELLEMENT traitées par cycle (borne coût CPU/Actions).
+#: Nombre max de sources ayant RÉELLEMENT produit des clips par cycle.
 MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
+#: Nombre max de sources ESSAYÉES par cycle : si une source échoue (blocage
+#: anti-bot, VOD indisponible…), on passe à la suivante au lieu d'arrêter.
+MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 4)
+#: Une source n'est définitivement abandonnée qu'après ce nombre d'échecs.
+MAX_SOURCE_FAILURES: int = _get_int("MAX_SOURCE_FAILURES", 3)
 #: Nombre max de clips produits/publiés par cycle.
 MAX_CLIPS_PER_RUN: int = _get_int("MAX_CLIPS_PER_RUN", 3)
 #: Fuseau utilisé pour la planification des publications.
@@ -205,6 +210,12 @@ DOWNLOAD_MAX_HEIGHT: int = _get_int("DOWNLOAD_MAX_HEIGHT", 1080)
 DOWNLOAD_RETRIES: int = _get_int("DOWNLOAD_RETRIES", 3)
 #: Téléchargements de fragments HLS/DASH en parallèle (VODs Twitch/Kick).
 DOWNLOAD_CONCURRENCY: int = _get_int("DOWNLOAD_CONCURRENCY", 8)
+#: YouTube bloque les IP de datacenter ("Sign in to confirm you're not a bot").
+#: Utiliser d'autres clients de lecture contourne souvent la vérification.
+YTDLP_PLAYER_CLIENTS: list[str] = _get_list("YTDLP_PLAYER_CLIENTS", ["tv", "mweb", "web"])
+#: Solution de secours la plus fiable : un fichier cookies YouTube (format
+#: Netscape). En CI, le secret YOUTUBE_COOKIES est écrit dans ce fichier.
+YOUTUBE_COOKIES_FILE: str | None = _get("YOUTUBE_COOKIES_FILE", "./youtube_cookies.txt")
 
 # --- Stratégie "longs VODs" (subathons de 20-40h impossibles à traiter en free tier) ---
 #: VOD de durée <= ce seuil => on télécharge/traite l'intégralité.

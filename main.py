@@ -214,7 +214,8 @@ def run(detect_only: bool = False) -> int:
     candidates = sorted(candidates, key=_cost)
 
     # --- Traitement des sources --------------------------------------------
-    sources_done = 0
+    sources_done = 0      # sources ayant réellement produit des clips
+    attempts = 0          # sources essayées (échecs compris)
     clips_total = 0
     published_before = len(state.published)
     chosen: list = []
@@ -222,23 +223,39 @@ def run(detect_only: bool = False) -> int:
         if sources_done >= settings.MAX_SOURCES_PER_RUN:
             log.info("Limite MAX_SOURCES_PER_RUN atteinte.")
             break
+        if attempts >= settings.MAX_SOURCE_ATTEMPTS_PER_RUN:
+            log.warning("Limite d'essais atteinte (%d) sans succès.", attempts)
+            break
         if state.is_processed(cand.uid):
             log.debug("  %s déjà traité, skip.", cand.uid)
             continue
-        if not settings.DRY_RUN and state.uploads_left() <= 0:
-            log.warning("Quota mensuel épuisé — fin du cycle.")
-            break
 
         log.info("→ Traitement %s (%s)", cand.uid, cand.title[:60])
         chosen.append(cand)
+        attempts += 1
+        produced = 0
         try:
-            clips_total += _process_source(cand, storage, state)
+            produced = _process_source(cand, storage, state)
         except Exception as exc:  # noqa: BLE001 - isole la panne d'une source
             log.error("  Échec source %s : %s", cand.uid, exc, exc_info=True)
-        finally:
+
+        clips_total += produced
+        if produced > 0:
+            # Succès : la source est consommée définitivement.
             state.mark_processed(cand.uid)
-            storage.save_state(state)  # sauvegarde incrémentale (résilience)
             sources_done += 1
+        else:
+            # Échec (blocage anti-bot, VOD indispo…) : souvent temporaire.
+            # On ne "grille" pas la source, on la réessaiera au prochain cycle,
+            # et on passe immédiatement au candidat suivant.
+            n = state.record_failure(cand.uid)
+            if n >= settings.MAX_SOURCE_FAILURES:
+                log.warning("  %s abandonné après %d échecs.", cand.uid, n)
+                state.mark_processed(cand.uid)
+            else:
+                log.info("  %s : 0 clip (échec %d/%d) — on passe au suivant.",
+                         cand.uid, n, settings.MAX_SOURCE_FAILURES)
+        storage.save_state(state)  # sauvegarde incrémentale (résilience)
 
     # --- Rapport de run sur Drive (pour vérifier les sources d'un coup d'œil) --
     try:

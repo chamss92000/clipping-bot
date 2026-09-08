@@ -71,6 +71,9 @@ class State:
     uploads_this_month: dict[str, int] = field(default_factory=dict)
     #: Compteur d'uploads YouTube par jour (YYYY-MM-DD) — garde-fou quota API.
     youtube_uploads: dict[str, int] = field(default_factory=dict)
+    #: Échecs par source (uid -> nb). Une source n'est abandonnée qu'après
+    #: plusieurs échecs (un blocage réseau/anti-bot est souvent temporaire).
+    failures: dict[str, int] = field(default_factory=dict)
     updated_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +102,14 @@ class State:
     def record_upload(self) -> None:
         k = self.month_key()
         self.uploads_this_month[k] = self.uploads_this_month.get(k, 0) + 1
+
+    def record_failure(self, uid: str) -> int:
+        """Incrémente le compteur d'échecs d'une source et le retourne."""
+        self.failures[uid] = self.failures.get(uid, 0) + 1
+        return self.failures[uid]
+
+    def failure_count(self, uid: str) -> int:
+        return self.failures.get(uid, 0)
 
     def _day_key(self, when: datetime | None = None) -> str:
         return (when or datetime.now(timezone.utc)).strftime("%Y-%m-%d")

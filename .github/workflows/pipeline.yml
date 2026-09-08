@@ -49,6 +49,17 @@ jobs:
           key: whisper-faster-${{ hashFiles('config/settings.py') }}
           restore-keys: whisper-faster-
 
+      - name: Cookies YouTube (optionnel — contourne la verif anti-bot)
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -n "$YOUTUBE_COOKIES" ]; then
+            printf '%s' "$YOUTUBE_COOKIES" > youtube_cookies.txt
+            echo "Cookies YouTube configures."
+          else
+            echo "Pas de cookies YouTube (optionnel) - on compte sur les clients alternatifs et Twitch/Kick."
+          fi
+
       - name: Run pipeline
         env:
           # --- Bloc 1 ---
