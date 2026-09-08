@@ -51,7 +51,7 @@ def _ass_header() -> str:
 ScriptType: v4.00+
 PlayResX: {settings.OUTPUT_WIDTH}
 PlayResY: {settings.OUTPUT_HEIGHT}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
@@ -68,9 +68,16 @@ def _chunk_words(words: list[Word], n: int) -> list[list[Word]]:
     return [words[i : i + n] for i in range(0, len(words), n)]
 
 
+#: Ponctuation retirée en début/fin de mot affiché (on garde ' et - internes).
+_STRIP_CHARS = ",.;:!?…«»\"'()[]-–—"
+
+
 def _clean(word: str) -> str:
     # Échappe les accolades ASS et nettoie les espaces.
     token = word.strip().replace("{", "(").replace("}", ")")
+    if settings.SUB_STRIP_PUNCT:
+        stripped = token.strip(_STRIP_CHARS)
+        token = stripped or token  # ne vide jamais complètement le mot
     if settings.SUB_UPPERCASE:
         token = token.upper()
     return token

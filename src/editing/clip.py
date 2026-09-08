@@ -203,6 +203,23 @@ def _write_sendcmd(track: list[tuple[float, int]], path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _blur_fit_graph() -> str:
+    """Filtergraph "image entière + fond flou" (rendu propre sur gameplay/cinéma).
+
+    L'image source est mise à l'échelle pour tenir entièrement dans le 9:16, et
+    le fond est la même image agrandie/rognée puis floutée et légèrement
+    assombrie (contraste avec les sous-titres).
+    """
+    w, h = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
+    return (
+        "[0:v]split=2[bg][fg];"
+        f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},boxblur=24:2,eq=brightness=-0.08[bgb];"
+        f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];"
+        "[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+    )
+
+
 def _run_ffmpeg(cmd: list[str], label: str, cwd: str | Path | None = None) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd) if cwd else None)
     if proc.returncode != 0:
@@ -230,6 +247,34 @@ def make_vertical_clip(
         seg = _extract_segment(source_path, start, end, Path(td) / "seg.mp4")
 
         samples, w, h = _sample_face_track(seg)
+
+        # --- Choix du cadrage -------------------------------------------------
+        # Un gros plan "suivi de visage" n'a de sens que s'il y a vraiment un
+        # visage. Sur du gameplay/cinématique, il montre surtout du décor vide :
+        # dans ce cas l'image entière sur fond flou rend bien mieux.
+        detected = sum(1 for _, x in samples if x is not None)
+        rate = detected / len(samples) if samples else 0.0
+        mode = settings.FRAMING
+        if mode == "auto":
+            mode = "face" if rate >= settings.FACE_MIN_RATE else "blur"
+        log.info("Clip: cadrage=%s (visage détecté sur %.0f%% du clip)", mode, rate * 100)
+
+        if mode == "blur":
+            cmd = [
+                settings.FFMPEG_BIN, "-y", "-i", str(seg),
+                "-filter_complex", _blur_fit_graph(),
+                "-map", "[v]", "-map", "0:a?",
+                "-r", str(settings.OUTPUT_FPS),
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "128k",
+                str(out_path),
+            ]
+            _run_ffmpeg(cmd, "cadrage fond flou", cwd=td)
+            log.info(
+                "Clip: écrit %s (%dx%d)", out_path.name,
+                settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT,
+            )
+            return out_path
 
         # Plus grand rectangle 9:16 tenant dans la source.
         target_ar = settings.OUTPUT_WIDTH / settings.OUTPUT_HEIGHT  # 9/16

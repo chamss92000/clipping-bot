@@ -241,6 +241,11 @@ OUTPUT_FPS: int = _get_int("OUTPUT_FPS", 30)
 #: fréquence (Hz) puis on interpole, pour éviter les tremblements de cadre.
 FACE_SAMPLE_HZ: float = _get_float("FACE_SAMPLE_HZ", 4.0)
 FACE_DETECTION_CONFIDENCE: float = _get_float("FACE_DETECTION_CONFIDENCE", 0.5)
+#: Cadrage vertical : "auto" (gros plan si visage présent, sinon fond flou),
+#: "face" (toujours suivi de visage), "blur" (toujours image entière + fond flou).
+FRAMING: str = _get("FRAMING", "auto")
+#: En "auto", on passe en fond flou si un visage est détecté sur moins de X% du clip.
+FACE_MIN_RATE: float = _get_float("FACE_MIN_RATE", 0.4)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
 #: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
@@ -262,6 +267,8 @@ SUB_OUTLINE_WIDTH: int = _get_int("SUB_OUTLINE_WIDTH", 6)   # contour épais = l
 SUB_SHADOW: int = _get_int("SUB_SHADOW", 3)
 SUB_MARGIN_V: int = _get_int("SUB_MARGIN_V", 620)          # remonte le texte (zone safe TikTok)
 SUB_UPPERCASE: bool = _get_bool("SUB_UPPERCASE", True)     # MAJUSCULES = punch
+#: Retire la ponctuation en début/fin de chaque mot affiché (rendu plus propre).
+SUB_STRIP_PUNCT: bool = _get_bool("SUB_STRIP_PUNCT", True)
 SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 3)
 
 # Titre fixe (hook) affiché en haut du clip, toute la durée.
