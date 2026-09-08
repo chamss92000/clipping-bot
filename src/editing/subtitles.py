@@ -60,7 +60,7 @@ Style: Default,{settings.SUB_FONT},{settings.SUB_FONT_SIZE},{settings.SUB_PRIMAR
 Style: Title,{settings.SUB_FONT},{settings.TITLE_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&HB0000000,-1,0,0,0,100,100,0,0,{3 if settings.TITLE_BOX else 1},4,1,8,90,90,{settings.TITLE_MARGIN_V},1
 
 [Events]
-Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
