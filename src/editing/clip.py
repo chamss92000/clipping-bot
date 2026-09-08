@@ -152,29 +152,47 @@ def _smooth_track(
     if all(x is None for x in xs):
         return None
 
-    center = (src_w - crop_w) / 2
-    # 1) comble les None : dernière valeur connue, sinon centre.
-    filled: list[float] = []
-    last = None
+    max_x = src_w - crop_w
+    center = max_x / 2
+
+    # 1) Rejet des détections aberrantes (Haar sort parfois un faux visage très
+    #    loin) : on ignore un point qui saute de plus de 35% de la largeur d'un
+    #    échantillon au suivant — on garde la dernière valeur fiable.
+    face_centers: list[float] = []
+    last_valid: float | None = None
+    jump_limit = src_w * 0.35
     for x in xs:
         if x is None:
-            filled.append(last if last is not None else center)
+            face_centers.append(last_valid if last_valid is not None else src_w / 2)
+        elif last_valid is not None and abs(x - last_valid) > jump_limit:
+            face_centers.append(last_valid)  # saut trop grand => ignoré
         else:
-            filled.append(x)
-            last = x
-    # 2) le cadre doit être centré sur le visage : x = face_x - crop_w/2
-    targets = [fx - crop_w / 2 for fx in filled]
-    # 3) moyenne glissante
+            face_centers.append(x)
+            last_valid = x
+
+    # 2) Cadre centré sur le visage, borné.
+    targets = [min(max(fx - crop_w / 2, 0.0), max_x) for fx in face_centers]
+
+    # 3) Lissage FORT : moyenne exponentielle (pan lent) + limitation de vitesse
+    #    (max de déplacement par échantillon) => plus de saccades.
+    alpha = 0.18                          # plus petit = plus lisse
+    max_step = max(2.0, src_w * 0.012)    # px max entre 2 échantillons (~4 Hz)
     smoothed: list[float] = []
-    n = len(targets)
-    for i in range(n):
-        lo = max(0, i - window // 2)
-        hi = min(n, i + window // 2 + 1)
-        smoothed.append(sum(targets[lo:hi]) / (hi - lo))
-    # 4) clamp + arrondi pair
+    s = targets[0]
+    for tgt in targets:
+        s = alpha * tgt + (1 - alpha) * s
+        if smoothed:
+            delta = s - smoothed[-1]
+            if delta > max_step:
+                s = smoothed[-1] + max_step
+            elif delta < -max_step:
+                s = smoothed[-1] - max_step
+        smoothed.append(s)
+
+    # 4) clamp + arrondi pair (yuv420 exige des dimensions/positions paires)
     out: list[tuple[float, int]] = []
     for (t, _), x in zip(samples, smoothed):
-        cx = int(max(0, min(x, src_w - crop_w)))
+        cx = int(max(0, min(x, max_x)))
         cx -= cx % 2
         out.append((t, cx))
     return out

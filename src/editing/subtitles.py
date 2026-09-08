@@ -75,6 +75,32 @@ def _clean(word: str) -> str:
     return token
 
 
+#: Ponctuation qu'on ne veut jamais voir EN TÊTE d'un mot/ligne.
+_LEAD_PUNCT = set(",.;:!?…«»\"")
+
+
+def _normalize_words(words: list[Word]) -> list[Word]:
+    """Nettoie la tokenisation Whisper : fusionne la ponctuation isolée dans le
+    mot précédent et retire la ponctuation en tête de mot (évite les lignes qui
+    commencent par une virgule)."""
+    out: list[Word] = []
+    for w in words:
+        t = (w.word or "").strip()
+        if not t:
+            continue
+        if all(ch in _LEAD_PUNCT or ch in " -" for ch in t):
+            # token purement ponctuation => on le colle au mot précédent
+            if out:
+                out[-1] = Word(out[-1].start, w.end, out[-1].word + t)
+            continue
+        # retire la ponctuation/espaces de tête (", mot" -> "mot")
+        while t and t[0] in _LEAD_PUNCT:
+            t = t[1:].lstrip()
+        if t:
+            out.append(Word(w.start, w.end, t))
+    return out
+
+
 def build_ass(words: list[Word], out_ass: str | Path, clip_offset: float = 0.0) -> Path:
     """Génère un fichier ASS mot-par-mot surligné pour un clip démarrant à clip_offset."""
     out_ass = Path(out_ass)
@@ -88,6 +114,7 @@ def build_ass(words: list[Word], out_ass: str | Path, clip_offset: float = 0.0) 
         if e <= 0:
             continue
         rel.append(Word(start=max(0.0, s), end=max(0.05, e), word=w.word))
+    rel = _normalize_words(rel)
 
     hl = settings.SUB_HIGHLIGHT_COLOR
     primary = settings.SUB_PRIMARY_COLOR
@@ -136,7 +163,8 @@ def burn_subtitles(clip_path: str | Path, ass_path: str | Path, out_path: str | 
         cmd = [
             settings.FFMPEG_BIN, "-y", "-i", str(clip_path),
             "-vf", "subtitles=subs.ass",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-movflags", "+faststart",
             "-c:a", "copy",
             str(out_path),
         ]
