@@ -65,8 +65,15 @@ def _process_source(cand, storage, state) -> int:
             log.info("  %s : transcript vide, fenêtre ignorée.", cand.uid)
             continue
 
-        moments = detect_moments(transcript, dl.duration_s + offset)
         words = [w for s in transcript.segments for w in s.words]
+        if len(words) < settings.MIN_WORDS_PER_WINDOW:
+            log.info(
+                "  Trop peu de parole (%d mots < %d) — fenêtre ignorée (musique/gameplay muet).",
+                len(words), settings.MIN_WORDS_PER_WINDOW,
+            )
+            continue
+
+        moments = detect_moments(transcript, dl.duration_s + offset)
 
         for i, m in enumerate(moments):
             if produced >= settings.MAX_CLIPS_PER_RUN:

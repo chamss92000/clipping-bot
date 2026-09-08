@@ -33,6 +33,24 @@ _SOURCES = {
 }
 
 
+def _is_low_quality(c: VideoCandidate) -> str | None:
+    """Retourne la raison du rejet si la source est du contenu 'recyclé', sinon None.
+
+    C'est le filtre le plus déterminant sur la qualité finale : un récap de film
+    ou une compilation ne produira jamais un bon clip (pas de visage, pas de
+    réaction), quel que soit le montage.
+    """
+    title = (c.title or "").lower()
+    creator = (c.creator or "").lower()
+    for kw in settings.TITLE_BLACKLIST:
+        if kw and kw.lower() in title:
+            return f"titre contient '{kw}'"
+    for kw in settings.CHANNEL_BLACKLIST:
+        if kw and kw.lower() in creator:
+            return f"chaîne blacklistée '{kw}'"
+    return None
+
+
 def detect_all(
     enabled: list[Platform] | None = None,
     max_candidates: int | None = None,
@@ -61,9 +79,22 @@ def detect_all(
         all_candidates.extend(found)
         log.info("Source %s : %d candidats", platform.value, len(found))
 
+    # Filtre qualité : on écarte le contenu recyclé/narration avant tout traitement.
+    kept: list[VideoCandidate] = []
+    rejected = 0
+    for c in all_candidates:
+        reason = _is_low_quality(c)
+        if reason:
+            rejected += 1
+            log.info("Écarté (%s) : %s — %s", reason, c.creator, c.title[:60])
+        else:
+            kept.append(c)
+    if rejected:
+        log.info("Filtre qualité : %d source(s) écartée(s)", rejected)
+
     # Déduplication cross-source par uid (sécurité ; peu probable de collision).
     unique: dict[str, VideoCandidate] = {}
-    for c in all_candidates:
+    for c in kept:
         if c.uid not in unique or c.score > unique[c.uid].score:
             unique[c.uid] = c
 

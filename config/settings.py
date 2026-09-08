@@ -176,6 +176,25 @@ KICK_MIN_VIEWERS: int = _get_int("KICK_MIN_VIEWERS", 2000)
 KICK_VODS_PER_CHANNEL: int = _get_int("KICK_VODS_PER_CHANNEL", 2)
 KICK_FEATURED_LIMIT: int = _get_int("KICK_FEATURED_LIMIT", 20)
 
+# --- Filtres qualité de contenu (le plus gros levier sur la qualité des clips) ---
+# On écarte le contenu "recyclé"/narration (récaps de films, compilations,
+# trailers…) : pas de visage expressif, pas de réaction => clips plats.
+# On veut du "talking head" : créateurs/streamers qui réagissent et parlent.
+TITLE_BLACKLIST: list[str] = _get_list(
+    "TITLE_BLACKLIST",
+    [
+        "recap", "récap", "résumé du film", "resume du film", "histoire du film",
+        "raconte l'histoire", "explained", "compilation", "best of", "full movie",
+        "film complet", "trailer", "bande-annonce", "bande annonce", "lyric",
+        "top 10", "top10", "mashup", "edit audio",
+    ],
+)
+#: Créateurs/chaînes à exclure (sous-chaîne, insensible à la casse).
+CHANNEL_BLACKLIST: list[str] = _get_list("CHANNEL_BLACKLIST", [])
+#: Une fenêtre avec trop peu de parole (musique/gameplay muet) ne donne rien de
+#: bon : ni sous-titres, ni accroche. On la saute.
+MIN_WORDS_PER_WINDOW: int = _get_int("MIN_WORDS_PER_WINDOW", 40)
+
 
 # ---------------------------------------------------------------------------
 # Bloc 2 — Téléchargement (yt-dlp)
@@ -256,9 +275,10 @@ AUDIO_LOUDNORM_I: float = _get_float("AUDIO_LOUDNORM_I", -14.0)
 # ---------------------------------------------------------------------------
 # Bloc 6 — Sous-titres
 # ---------------------------------------------------------------------------
-# Police : "Arial" est dispo sur Windows (dev local) et aliasée sur le runner CI
-# (où on installe fonts-liberation qui fournit l'équivalent). Surchargée en CI.
-SUB_FONT: str = _get("SUB_FONT", "Arial")
+# Police embarquée dans le repo (assets/fonts) => rendu IDENTIQUE en local et en
+# CI. Anton = condensée très grasse, la police des captions virales.
+FONTS_DIR: Path = PROJECT_ROOT / "assets" / "fonts"
+SUB_FONT: str = _get("SUB_FONT", "Anton")
 SUB_FONT_SIZE: int = _get_int("SUB_FONT_SIZE", 92)  # gros = style TikTok
 SUB_PRIMARY_COLOR: str = _get("SUB_PRIMARY_COLOR", "&H00FFFFFF")  # blanc (ASS BGR)
 SUB_HIGHLIGHT_COLOR: str = _get("SUB_HIGHLIGHT_COLOR", "&H0000F0FF")  # jaune vif

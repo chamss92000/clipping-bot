@@ -192,6 +192,17 @@ def burn_subtitles(clip_path: str | Path, ass_path: str | Path, out_path: str | 
     with tempfile.TemporaryDirectory() as td:
         local_ass = Path(td) / "subs.ass"
         shutil.copyfile(ass_path, local_ass)
+        # Police embarquée : on copie les .ttf dans le dossier temp et on pointe
+        # `fontsdir=.` (relatif, sans ':') => même rendu partout, sans dépendre
+        # des polices installées sur la machine.
+        fonts_opt = ""
+        try:
+            if settings.FONTS_DIR.is_dir():
+                for ttf in settings.FONTS_DIR.glob("*.tt[fc]"):
+                    shutil.copyfile(ttf, Path(td) / ttf.name)
+                fonts_opt = ":fontsdir=."
+        except Exception as exc:  # noqa: BLE001 - on retombe sur les polices système
+            log.warning("Polices embarquées indisponibles (%s) — polices système", exc)
         # Audio : loudnorm (standard TikTok ~ -14 LUFS) => ré-encodage AAC ;
         # sinon simple copie.
         if settings.AUDIO_LOUDNORM:
@@ -203,7 +214,7 @@ def burn_subtitles(clip_path: str | Path, ass_path: str | Path, out_path: str | 
             audio_args = ["-c:a", "copy"]
         cmd = [
             settings.FFMPEG_BIN, "-y", "-i", str(clip_path),
-            "-vf", "subtitles=subs.ass",
+            "-vf", f"subtitles=subs.ass{fonts_opt}",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-movflags", "+faststart",
             *audio_args,
