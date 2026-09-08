@@ -188,10 +188,15 @@ KICK_FEATURED_LIMIT: int = _get_int("KICK_FEATURED_LIMIT", 20)
 TITLE_BLACKLIST: list[str] = _get_list(
     "TITLE_BLACKLIST",
     [
+        # Contenu recyclé / narration (pas de visage, pas de réaction)
         "recap", "récap", "résumé du film", "resume du film", "histoire du film",
         "raconte l'histoire", "explained", "compilation", "best of", "full movie",
         "film complet", "trailer", "bande-annonce", "bande annonce", "lyric",
         "top 10", "top10", "mashup", "edit audio",
+        # Retransmissions esport officielles : commentaire technique, aucune
+        # facecam, aucune punchline => clips systématiquement plats.
+        "bo3", "bo5", "playoff", "qualifier", "group stage", "grand final",
+        "championship", "tournament", "esports", "stage 0", "showmatch",
     ],
 )
 #: Créateurs/chaînes à exclure (sous-chaîne, insensible à la casse).
@@ -258,7 +263,7 @@ CLIP_MAX_DURATION_S: int = _get_int("CLIP_MAX_DURATION_S", 75)
 GEMINI_MIN_INTERVAL_S: float = _get_float("GEMINI_MIN_INTERVAL_S", 4.0)
 #: Seuil de qualité : on ignore les moments dont le score LLM est sous ce seuil
 #: (0-100). Mieux vaut peu de bons clips que beaucoup de moyens.
-GEMINI_MIN_SCORE: float = _get_float("GEMINI_MIN_SCORE", 65.0)
+GEMINI_MIN_SCORE: float = _get_float("GEMINI_MIN_SCORE", 78.0)
 
 
 # ---------------------------------------------------------------------------
