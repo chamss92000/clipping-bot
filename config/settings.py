@@ -215,9 +215,11 @@ DOWNLOAD_MAX_HEIGHT: int = _get_int("DOWNLOAD_MAX_HEIGHT", 1080)
 DOWNLOAD_RETRIES: int = _get_int("DOWNLOAD_RETRIES", 3)
 #: Téléchargements de fragments HLS/DASH en parallèle (VODs Twitch/Kick).
 DOWNLOAD_CONCURRENCY: int = _get_int("DOWNLOAD_CONCURRENCY", 8)
-#: YouTube bloque les IP de datacenter ("Sign in to confirm you're not a bot").
-#: Utiliser d'autres clients de lecture contourne souvent la vérification.
-YTDLP_PLAYER_CLIENTS: list[str] = _get_list("YTDLP_PLAYER_CLIENTS", ["tv", "mweb", "web"])
+#: Clients de lecture yt-dlp. VIDE = laisser yt-dlp choisir (recommandé).
+#: Forcer "tv"/"mweb" casse le téléchargement ("The page needs to be reloaded")
+#: sans pour autant contourner l'anti-bot des IP datacenter : seule la solution
+#: cookies fonctionne. On garde le réglage disponible mais désactivé.
+YTDLP_PLAYER_CLIENTS: list[str] = _get_list("YTDLP_PLAYER_CLIENTS", [])
 #: Solution de secours la plus fiable : un fichier cookies YouTube (format
 #: Netscape). En CI, le secret YOUTUBE_COOKIES est écrit dans ce fichier.
 YOUTUBE_COOKIES_FILE: str | None = _get("YOUTUBE_COOKIES_FILE", "./youtube_cookies.txt")
