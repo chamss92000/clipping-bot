@@ -90,6 +90,14 @@ jobs:
           CHANNEL_BLACKLIST: ${{ vars.CHANNEL_BLACKLIST || '' }}
           # cadrage : auto | face | blur
           FRAMING: ${{ vars.FRAMING || 'auto' }}
+          # --- Source Twitch Clips (moments déjà viraux) ---
+          TWITCH_SOURCE: ${{ vars.TWITCH_SOURCE || 'clips' }}
+          # ne garder que les clips au-dessus de N vues (ex. 500 = gros clips only)
+          TWITCH_CLIP_MIN_VIEWS: ${{ vars.TWITCH_CLIP_MIN_VIEWS || '50' }}
+          # fenêtre de fraîcheur des clips, en jours
+          TWITCH_CLIPS_DAYS: ${{ vars.TWITCH_CLIPS_DAYS || '7' }}
+          # nb de clips produits par cycle
+          MAX_CLIPS_PER_RUN: ${{ vars.MAX_CLIPS_PER_RUN || '3' }}
           # --- Tuning ---
           LOG_LEVEL: INFO
           DRY_RUN: ${{ inputs.dry_run }}
