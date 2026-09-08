@@ -219,6 +219,8 @@ def run(detect_only: bool = False) -> int:
     clips_total = 0
     published_before = len(state.published)
     chosen: list = []
+    #: Plateformes qui bloquent (anti-bot) : abandonnées pour tout ce cycle.
+    blocked_platforms: set = set()
     for cand in candidates:
         if sources_done >= settings.MAX_SOURCES_PER_RUN:
             log.info("Limite MAX_SOURCES_PER_RUN atteinte.")
@@ -229,23 +231,42 @@ def run(detect_only: bool = False) -> int:
         if state.is_processed(cand.uid):
             log.debug("  %s déjà traité, skip.", cand.uid)
             continue
+        if cand.platform in blocked_platforms:
+            log.debug("  %s ignoré (plateforme bloquée ce cycle).", cand.uid)
+            continue
 
         log.info("→ Traitement %s (%s)", cand.uid, cand.title[:60])
         chosen.append(cand)
         attempts += 1
         produced = 0
+        platform_blocked = False
         try:
             produced = _process_source(cand, storage, state)
         except Exception as exc:  # noqa: BLE001 - isole la panne d'une source
-            log.error("  Échec source %s : %s", cand.uid, exc, exc_info=True)
+            from src.downloader.download import BotCheckError, is_bot_check
+
+            if isinstance(exc, BotCheckError) or is_bot_check(exc):
+                platform_blocked = True
+                blocked_platforms.add(cand.platform)
+                attempts -= 1  # un blocage plateforme ne "consomme" pas un essai
+                log.warning(
+                    "  %s bloque (anti-bot) — plateforme abandonnée pour ce cycle, "
+                    "on bascule sur les autres.", cand.platform.value,
+                )
+            else:
+                log.error("  Échec source %s : %s", cand.uid, exc, exc_info=True)
 
         clips_total += produced
         if produced > 0:
             # Succès : la source est consommée définitivement.
             state.mark_processed(cand.uid)
             sources_done += 1
+        elif platform_blocked:
+            # Ce n'est pas la faute de la source : on ne compte aucun échec
+            # pour elle, elle reste disponible pour un prochain cycle.
+            log.info("  %s reste disponible (blocage plateforme, pas la source).", cand.uid)
         else:
-            # Échec (blocage anti-bot, VOD indispo…) : souvent temporaire.
+            # Échec (VOD indispo, montage KO…) : souvent temporaire.
             # On ne "grille" pas la source, on la réessaiera au prochain cycle,
             # et on passe immédiatement au candidat suivant.
             n = state.record_failure(cand.uid)

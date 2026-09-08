@@ -36,6 +36,26 @@ class DownloadError(RuntimeError):
     pass
 
 
+class BotCheckError(DownloadError):
+    """La plateforme exige une vérification anti-bot (IP datacenter bloquée).
+
+    Inutile d'insister sur les autres vidéos de la MÊME plateforme dans ce
+    cycle : l'orchestrateur bascule directement sur une autre plateforme.
+    """
+
+
+def is_bot_check(exc: BaseException | None) -> bool:
+    """Détecte un blocage anti-bot en remontant la chaîne des causes."""
+    seen = 0
+    while exc is not None and seen < 6:
+        msg = str(exc).lower()
+        if "not a bot" in msg or "sign in to confirm" in msg or "confirm you" in msg:
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
 @dataclass
 class DownloadResult:
     candidate: VideoCandidate
@@ -232,6 +252,7 @@ def download_planned(candidate: VideoCandidate, dest_dir: str | Path) -> list[Do
     if not windows:
         return []
     results: list[DownloadResult] = []
+    bot_check = False
     for w in windows:
         try:
             if w is None:
@@ -239,7 +260,15 @@ def download_planned(candidate: VideoCandidate, dest_dir: str | Path) -> list[Do
             else:
                 results.append(download(candidate, dest_dir, w[0], w[1]))
         except Exception as exc:  # noqa: BLE001 - une fenêtre ratée n'annule pas les autres
+            if is_bot_check(exc):
+                bot_check = True
             log.error("Échec fenêtre %s de %s : %s", w, candidate.uid, exc)
+    if not results and bot_check:
+        # Remonte l'info pour que l'orchestrateur change de plateforme.
+        raise BotCheckError(
+            f"{candidate.platform.value} exige une vérification anti-bot "
+            "(IP de datacenter bloquée)"
+        )
     return results
 
 
