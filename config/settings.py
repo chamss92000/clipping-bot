@@ -103,7 +103,7 @@ MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 20)
 MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
 #: Nombre max de sources ESSAYÉES par cycle : si une source échoue (blocage
 #: anti-bot, VOD indisponible…), on passe à la suivante au lieu d'arrêter.
-MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 4)
+MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 12)
 #: Une source n'est définitivement abandonnée qu'après ce nombre d'échecs.
 MAX_SOURCE_FAILURES: int = _get_int("MAX_SOURCE_FAILURES", 3)
 #: Nombre max de clips produits/publiés par cycle.
@@ -187,6 +187,12 @@ KICK_CHANNELS: list[str] = _get_list("KICK_CHANNELS", ["xqc", "trainwreckstv", "
 KICK_MIN_VIEWERS: int = _get_int("KICK_MIN_VIEWERS", 2000)
 KICK_VODS_PER_CHANNEL: int = _get_int("KICK_VODS_PER_CHANNEL", 2)
 KICK_FEATURED_LIMIT: int = _get_int("KICK_FEATURED_LIMIT", 20)
+#: Source Kick : "clips" (moments déjà viraux — RECOMMANDÉ) ou "vods".
+KICK_SOURCE: str = _get("KICK_SOURCE", "clips")
+KICK_CLIPS_PER_CHANNEL: int = _get_int("KICK_CLIPS_PER_CHANNEL", 8)
+KICK_CLIP_MIN_VIEWS: int = _get_int("KICK_CLIP_MIN_VIEWS", 50)
+#: Fenêtre de tri des clips Kick : day | week | month | all.
+KICK_CLIPS_TIME: str = _get("KICK_CLIPS_TIME", "week")
 
 # --- Filtres qualité de contenu (le plus gros levier sur la qualité des clips) ---
 # On écarte le contenu "recyclé"/narration (récaps de films, compilations,
@@ -249,7 +255,9 @@ SOURCE_HARD_MAX_DURATION_S: int = _get_int("SOURCE_HARD_MAX_DURATION_S", 0)
 # ---------------------------------------------------------------------------
 # Bloc 3 — Transcription (Whisper)
 # ---------------------------------------------------------------------------
-WHISPER_MODEL: str = _get("WHISPER_MODEL", "small")  # small = bien plus précis que base
+# medium : nettement plus précis que small (surtout en français). Viable car
+# les clips sont courts (5-60s) => transcription rapide malgré le modèle plus lourd.
+WHISPER_MODEL: str = _get("WHISPER_MODEL", "medium")
 WHISPER_LANGUAGE: str | None = _get("WHISPER_LANGUAGE")  # None => autodetect
 WHISPER_DEVICE: str = _get("WHISPER_DEVICE", "cpu")
 #: Type de calcul faster-whisper : "int8" (rapide/CPU), "int8_float16", "float32".

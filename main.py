@@ -38,8 +38,14 @@ def _dump_candidates(candidates) -> None:
     log.info("Candidats écrits dans %s", out)
 
 
-def _process_source(cand, storage, state) -> int:
-    """Traite une source de bout en bout. Retourne le nb de clips publiés/produits."""
+def _process_source(cand, storage, state, budget: int | None = None) -> int:
+    """Traite une source de bout en bout. Retourne le nb de clips produits.
+
+    `budget` = nombre max de clips à produire pour cette source (reste du
+    quota du cycle). None => settings.MAX_CLIPS_PER_RUN.
+    """
+    if budget is None:
+        budget = settings.MAX_CLIPS_PER_RUN
     # Imports tardifs : n'importe torch/mediapipe que si on traite réellement.
     from src.downloader.download import download, download_planned
     from src.editing.clip import make_vertical_clip
@@ -92,8 +98,7 @@ def _process_source(cand, storage, state) -> int:
             moments = detect_moments(transcript, dl.duration_s + offset)
 
         for i, m in enumerate(moments):
-            if produced >= settings.MAX_CLIPS_PER_RUN:
-                log.info("  Limite MAX_CLIPS_PER_RUN atteinte.")
+            if produced >= budget:
                 return produced
             if (
                 settings.PUBLISH_MODE == "tiktok_api"
@@ -230,19 +235,21 @@ def run(detect_only: bool = False) -> int:
     candidates = sorted(candidates, key=_cost)
 
     # --- Traitement des sources --------------------------------------------
-    sources_done = 0      # sources ayant réellement produit des clips
-    attempts = 0          # sources essayées (échecs compris)
+    # On s'arrête quand on a produit MAX_CLIPS_PER_RUN clips (le vrai objectif),
+    # ou après trop d'essais infructueux. En mode "clips", 1 candidat = 1 clip ;
+    # en mode "vods", 1 candidat peut en produire plusieurs.
+    attempts = 0
     clips_total = 0
     published_before = len(state.published)
     chosen: list = []
     #: Plateformes qui bloquent (anti-bot) : abandonnées pour tout ce cycle.
     blocked_platforms: set = set()
     for cand in candidates:
-        if sources_done >= settings.MAX_SOURCES_PER_RUN:
-            log.info("Limite MAX_SOURCES_PER_RUN atteinte.")
+        if clips_total >= settings.MAX_CLIPS_PER_RUN:
+            log.info("Objectif atteint : %d clips produits.", clips_total)
             break
         if attempts >= settings.MAX_SOURCE_ATTEMPTS_PER_RUN:
-            log.warning("Limite d'essais atteinte (%d) sans succès.", attempts)
+            log.warning("Limite d'essais atteinte (%d) — %d clips produits.", attempts, clips_total)
             break
         if state.is_processed(cand.uid):
             log.debug("  %s déjà traité, skip.", cand.uid)
@@ -256,8 +263,9 @@ def run(detect_only: bool = False) -> int:
         attempts += 1
         produced = 0
         platform_blocked = False
+        budget = settings.MAX_CLIPS_PER_RUN - clips_total
         try:
-            produced = _process_source(cand, storage, state)
+            produced = _process_source(cand, storage, state, budget=budget)
         except Exception as exc:  # noqa: BLE001 - isole la panne d'une source
             from src.downloader.download import BotCheckError, is_bot_check
 
@@ -276,7 +284,6 @@ def run(detect_only: bool = False) -> int:
         if produced > 0:
             # Succès : la source est consommée définitivement.
             state.mark_processed(cand.uid)
-            sources_done += 1
         elif platform_blocked:
             # Ce n'est pas la faute de la source : on ne compte aucun échec
             # pour elle, elle reste disponible pour un prochain cycle.
@@ -320,7 +327,7 @@ def run(detect_only: bool = False) -> int:
     except Exception as exc:  # noqa: BLE001
         log.warning("Upload du log sur Drive échoué : %s", exc)
 
-    log.info("=== Cycle terminé : %d sources traitées, %d clips produits ===", sources_done, clips_total)
+    log.info("=== Cycle terminé : %d essais, %d clips produits ===", attempts, clips_total)
     return 0
 
 

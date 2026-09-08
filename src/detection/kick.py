@@ -160,12 +160,88 @@ def _vod_to_candidate(vod: dict, channel: dict, live_viewers: int) -> VideoCandi
     )
 
 
+def _clip_trend_score(views: int, created_at: str | None) -> float:
+    age_h = 24.0
+    if created_at:
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            age_h = max(1.0, (datetime.now(timezone.utc) - dt).total_seconds() / 3600)
+        except ValueError:
+            pass
+    vph = views / age_h
+    return round(min(100.0, 20.0 * math.log10(vph + 1.0) + math.log10(max(views, 1))), 2)
+
+
+def _channel_clips(sess: requests.Session, slug: str, count: int) -> list[dict]:
+    try:
+        data = _get_json(sess, f"/api/v2/channels/{slug}/clips?sort=view&time={settings.KICK_CLIPS_TIME}")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Kick: clips de '%s' indisponibles : %s", slug, exc)
+        return []
+    items = data.get("clips") if isinstance(data, dict) else data
+    items = items or (data.get("data") if isinstance(data, dict) else []) or []
+    return items[:count]
+
+
+def detect_clips(channels: list[str] | None = None) -> list[VideoCandidate]:
+    """Clips Kick DÉJÀ viraux (triés par vues). Best-effort, [] si bloqué."""
+    channels = list(channels or settings.KICK_CHANNELS)
+    sess = _session()
+    discovered = _discover_featured(sess, settings.KICK_FEATURED_LIMIT)
+    for slug in discovered:
+        if slug not in channels:
+            channels.append(slug)
+
+    candidates: dict[str, VideoCandidate] = {}
+    for slug in channels:
+        for clip in _channel_clips(sess, slug, settings.KICK_CLIPS_PER_CHANNEL):
+            cid = clip.get("id")
+            if not cid:
+                continue
+            views = int(clip.get("view_count") or clip.get("views") or 0)
+            if views < settings.KICK_CLIP_MIN_VIEWS:
+                continue
+            dur = clip.get("duration")
+            dur = int(round(float(dur))) if dur else None
+            cand = VideoCandidate(
+                platform=Platform.KICK,
+                source_id=str(cid),
+                url=f"{_BASE}/{slug}/clips/{cid}",
+                title=clip.get("title", "") or "",
+                creator=((clip.get("channel") or {}).get("slug")) or slug,
+                views=views,
+                duration_s=dur,
+                published_at=clip.get("created_at"),
+                thumbnail=clip.get("thumbnail_url"),
+                score=_clip_trend_score(views, clip.get("created_at")),
+                extra={"is_clip": True, "slug": slug,
+                       "category": (clip.get("category") or {}).get("name")},
+            )
+            if cand.uid not in candidates:
+                candidates[cand.uid] = cand
+
+    result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
+    log.info("Kick: %d clips viraux candidats", len(result))
+    return result
+
+
 def detect(
     channels: list[str] | None = None,
     min_viewers: int | None = None,
     vods_per_channel: int | None = None,
 ) -> list[VideoCandidate]:
-    """Retourne des VODs candidates Kick. Renvoie [] si Kick est inaccessible."""
+    """Point d'entrée Kick. Par défaut => clips déjà viraux."""
+    if settings.KICK_SOURCE == "clips":
+        return detect_clips(channels)
+    return _detect_vods(channels, min_viewers, vods_per_channel)
+
+
+def _detect_vods(
+    channels: list[str] | None = None,
+    min_viewers: int | None = None,
+    vods_per_channel: int | None = None,
+) -> list[VideoCandidate]:
+    """Ancien mode : VODs candidates Kick. Renvoie [] si Kick est inaccessible."""
     channels = list(channels or settings.KICK_CHANNELS)
     min_viewers = min_viewers if min_viewers is not None else settings.KICK_MIN_VIEWERS
     vods_per_channel = vods_per_channel or settings.KICK_VODS_PER_CHANNEL
