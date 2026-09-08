@@ -41,15 +41,24 @@ def _dump_candidates(candidates) -> None:
 def _process_source(cand, storage, state) -> int:
     """Traite une source de bout en bout. Retourne le nb de clips publiés/produits."""
     # Imports tardifs : n'importe torch/mediapipe que si on traite réellement.
-    from src.downloader.download import download_planned
+    from src.downloader.download import download, download_planned
     from src.editing.clip import make_vertical_clip
     from src.editing.subtitles import build_ass, burn_subtitles
     from src.publisher.tiktok import build_caption, next_publish_slot, publish
     from src.transcription.whisper_transcribe import transcribe
-    from src.viral.gemini_detect import detect_moments
+    from src.viral.gemini_detect import ViralMoment, detect_moments, generate_caption
 
+    is_clip = bool(cand.extra.get("is_clip"))
     produced = 0
-    downloads = download_planned(cand, settings.DOWNLOAD_DIR)
+    if is_clip:
+        # Clip déjà viral : on télécharge l'intégralité (court), pas d'échantillonnage.
+        try:
+            downloads = [download(cand, settings.DOWNLOAD_DIR)]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("  %s : téléchargement du clip échoué : %s", cand.uid, exc)
+            return 0
+    else:
+        downloads = download_planned(cand, settings.DOWNLOAD_DIR)
     if not downloads:
         log.warning("  %s : rien à télécharger (ignoré).", cand.uid)
         return 0
@@ -61,19 +70,26 @@ def _process_source(cand, storage, state) -> int:
         except Exception as exc:  # noqa: BLE001 - une fenêtre KO n'annule pas les autres
             log.error("  Transcription échouée (%s) : %s", getattr(dl, "path", "?"), exc)
             continue
-        if not transcript.segments:
-            log.info("  %s : transcript vide, fenêtre ignorée.", cand.uid)
-            continue
 
         words = [w for s in transcript.segments for w in s.words]
-        if len(words) < settings.MIN_WORDS_PER_WINDOW:
-            log.info(
-                "  Trop peu de parole (%d mots < %d) — fenêtre ignorée (musique/gameplay muet).",
-                len(words), settings.MIN_WORDS_PER_WINDOW,
-            )
-            continue
 
-        moments = detect_moments(transcript, dl.duration_s + offset)
+        if is_clip:
+            # Le clip EST le moment viral : on prend toute sa durée, et on
+            # génère juste une accroche (Gemini) à partir du titre + transcript.
+            end = min(dl.duration_s, settings.CLIP_MAX_DURATION_S)
+            hook, hashtags = generate_caption(transcript, cand.title)
+            moments = [ViralMoment(start=0.0, end=end, score=cand.score, hook=hook, hashtags=hashtags)]
+        else:
+            if not transcript.segments:
+                log.info("  %s : transcript vide, fenêtre ignorée.", cand.uid)
+                continue
+            if len(words) < settings.MIN_WORDS_PER_WINDOW:
+                log.info(
+                    "  Trop peu de parole (%d mots < %d) — fenêtre ignorée (musique/gameplay muet).",
+                    len(words), settings.MIN_WORDS_PER_WINDOW,
+                )
+                continue
+            moments = detect_moments(transcript, dl.duration_s + offset)
 
         for i, m in enumerate(moments):
             if produced >= settings.MAX_CLIPS_PER_RUN:

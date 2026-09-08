@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -121,6 +121,107 @@ def _top_streams(min_viewers: int, limit: int, languages: list[str]) -> list[dic
     return collected
 
 
+def _recent_clips(user_id: str, count: int, started_at: str) -> list[dict]:
+    """Top clips (triés par vues) d'un streamer depuis `started_at` (RFC3339)."""
+    data = _helix_get(
+        "clips",
+        {"broadcaster_id": user_id, "first": min(count, 100), "started_at": started_at},
+    )
+    return data.get("data", [])
+
+
+def _clip_trend_score(views: int, created_at: str | None) -> float:
+    """Score 0-100 basé sur la vélocité (vues/heure) du clip."""
+    age_h = 24.0
+    if created_at:
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            age_h = max(1.0, (datetime.now(timezone.utc) - dt).total_seconds() / 3600)
+        except ValueError:
+            pass
+    vph = views / age_h
+    return round(min(100.0, 20.0 * math.log10(vph + 1.0) + math.log10(max(views, 1))), 2)
+
+
+def _clip_to_candidate(clip: dict) -> VideoCandidate | None:
+    cid = clip.get("id")
+    url = clip.get("url")
+    if not cid or not url:
+        return None
+    views = int(clip.get("view_count", 0))
+    duration = int(round(float(clip.get("duration", 0) or 0)))
+    return VideoCandidate(
+        platform=Platform.TWITCH,
+        source_id=str(cid),
+        url=url,
+        title=clip.get("title", "") or "",
+        creator=clip.get("broadcaster_name", "") or "",
+        views=views,
+        duration_s=duration or None,
+        published_at=clip.get("created_at"),
+        thumbnail=clip.get("thumbnail_url"),
+        score=_clip_trend_score(views, clip.get("created_at")),
+        extra={
+            "is_clip": True,  # <-- le clip EST déjà le moment viral
+            "language": clip.get("language"),
+            "game_id": clip.get("game_id"),
+            "creator_name": clip.get("creator_name"),
+        },
+    )
+
+
+def detect_clips(
+    min_viewers: int | None = None,
+    top_streams: int | None = None,
+    clips_per: int | None = None,
+    languages: list[str] | None = None,
+) -> list[VideoCandidate]:
+    """Détecte les clips Twitch DÉJÀ viraux (API Clips) chez les streamers chauds.
+
+    Bien supérieur au clipping de VODs : chaque clip est un moment sélectionné
+    par la communauté, court, téléchargeable, et filtrable par langue.
+    """
+    min_viewers = min_viewers if min_viewers is not None else settings.TWITCH_MIN_VIEWERS
+    top_streams = top_streams or settings.TWITCH_TOP_STREAMS
+    clips_per = clips_per or settings.TWITCH_CLIPS_PER_STREAMER
+    languages = languages if languages is not None else settings.TWITCH_LANGUAGES
+    langs = set(languages)
+
+    try:
+        streams = _top_streams(min_viewers, top_streams, languages)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Twitch: échec récupération top streams : %s", exc)
+        return []
+    log.info("Twitch: %d streamers chauds, recherche de leurs clips…", len(streams))
+
+    started_at = (
+        datetime.now(timezone.utc) - timedelta(days=settings.TWITCH_CLIPS_DAYS)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    candidates: dict[str, VideoCandidate] = {}
+    for stream in streams:
+        uid = stream.get("user_id")
+        if not uid:
+            continue
+        try:
+            clips = _recent_clips(uid, clips_per, started_at)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Twitch: clips indisponibles pour %s : %s", stream.get("user_name"), exc)
+            continue
+        for clip in clips:
+            if langs and clip.get("language") not in langs:
+                continue
+            if int(clip.get("view_count", 0)) < settings.TWITCH_CLIP_MIN_VIEWS:
+                continue
+            cand = _clip_to_candidate(clip)
+            if cand and cand.uid not in candidates:
+                candidates[cand.uid] = cand
+
+    result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
+    log.info("Twitch: %d clips viraux candidats", len(result))
+    return result
+
+
 def _recent_vods(user_id: str, count: int) -> list[dict]:
     data = _helix_get(
         "videos",
@@ -181,11 +282,20 @@ def detect(
     vods_per_streamer: int | None = None,
     languages: list[str] | None = None,
 ) -> list[VideoCandidate]:
-    """Retourne des VODs candidates issues des streamers les plus regardés.
+    """Point d'entrée Twitch. Par défaut => clips déjà viraux (bien meilleur).
+    `TWITCH_SOURCE=vods` bascule sur l'ancien échantillonnage de VODs."""
+    if settings.TWITCH_SOURCE == "clips":
+        return detect_clips(min_viewers, top_streams, None, languages)
+    return _detect_vods(min_viewers, top_streams, vods_per_streamer, languages)
 
-    Robuste : l'échec de récupération des VODs d'un streamer est loggé sans
-    interrompre les autres.
-    """
+
+def _detect_vods(
+    min_viewers: int | None = None,
+    top_streams: int | None = None,
+    vods_per_streamer: int | None = None,
+    languages: list[str] | None = None,
+) -> list[VideoCandidate]:
+    """Ancien mode : VODs candidates issues des streamers les plus regardés."""
     min_viewers = min_viewers if min_viewers is not None else settings.TWITCH_MIN_VIEWERS
     top_streams = top_streams or settings.TWITCH_TOP_STREAMS
     vods_per_streamer = vods_per_streamer or settings.TWITCH_VODS_PER_STREAMER

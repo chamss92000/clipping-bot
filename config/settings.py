@@ -165,6 +165,13 @@ YOUTUBE_MAX_DURATION_S: int = _get_int("YOUTUBE_MAX_DURATION_S", 4 * 3600)
 YOUTUBE_MIN_VIEWS: int = _get_int("YOUTUBE_MIN_VIEWS", 20_000)
 
 # Twitch
+#: Source Twitch : "clips" (moments déjà viraux via l'API Clips — RECOMMANDÉ)
+#: ou "vods" (ancien mode : échantillonnage de VODs longues).
+TWITCH_SOURCE: str = _get("TWITCH_SOURCE", "clips")
+#: Clips : on récupère les plus vus des N derniers jours chez les streamers chauds.
+TWITCH_CLIPS_DAYS: int = _get_int("TWITCH_CLIPS_DAYS", 7)
+TWITCH_CLIPS_PER_STREAMER: int = _get_int("TWITCH_CLIPS_PER_STREAMER", 8)
+TWITCH_CLIP_MIN_VIEWS: int = _get_int("TWITCH_CLIP_MIN_VIEWS", 50)
 TWITCH_MIN_VIEWERS: int = _get_int("TWITCH_MIN_VIEWERS", 3000)
 TWITCH_TOP_STREAMS: int = _get_int("TWITCH_TOP_STREAMS", 20)
 #: Langues de streams retenues (Helix `language`).

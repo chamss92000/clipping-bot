@@ -215,6 +215,39 @@ def _sanitize(raw_moments: list, duration: float) -> list[ViralMoment]:
     return moments[: settings.GEMINI_MAX_CLIPS]
 
 
+_CAPTION_PROMPT = """Tu es expert en clips viraux TikTok/Shorts. Voici un clip
+déjà populaire (titre d'origine : "{title}"). Sa transcription :
+
+{transcript}
+
+Génère une accroche (hook) courte et une liste de hashtags pour maximiser les vues.
+- `hook` : max ~70 caractères, dans la LANGUE du clip, crée la curiosité, PAS de spoiler.
+- `hashtags` : 3 à 5, pertinents.
+Réponds UNIQUEMENT en JSON : {{"hook": "...", "hashtags": ["#..", "#.."]}}"""
+
+
+def generate_caption(transcript: Transcript, fallback_title: str = "") -> tuple[str, list[str]]:
+    """Génère (hook, hashtags) pour un clip déjà viral. 1 appel Gemini, avec
+    repli sur le titre d'origine en cas d'échec."""
+    text = transcript.full_text[:2000] if transcript.segments else ""
+    if not text and not fallback_title:
+        return ("", [])
+    prompt = _CAPTION_PROMPT.format(title=fallback_title[:150], transcript=text or "(pas de dialogue)")
+    try:
+        raw = _call_gemini(prompt).strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()
+        data = json.loads(raw)
+        hook = str(data.get("hook") or fallback_title).strip()[:150]
+        tags = data.get("hashtags") or []
+        if isinstance(tags, str):
+            tags = tags.split()
+        tags = [t if t.startswith("#") else f"#{t}" for t in tags][:8]
+        return (hook or fallback_title, tags)
+    except Exception as exc:  # noqa: BLE001 - repli sur le titre d'origine
+        log.warning("Viral: génération caption échouée (%s) — repli sur le titre.", exc)
+        return (fallback_title, [])
+
+
 def detect_moments(transcript: Transcript, video_duration_s: float) -> list[ViralMoment]:
     """Retourne les meilleurs moments viraux du transcript (liste possiblement vide)."""
     if not transcript.segments:
