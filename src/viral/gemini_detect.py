@@ -127,7 +127,8 @@ def _extract_json_array(raw: str) -> list:
     return data
 
 
-@retry(exceptions=(Exception,), attempts=3)
+# base_delay élevé : sur un 429 (quota/min épuisé), il faut attendre ~30-60s.
+@retry(exceptions=(Exception,), attempts=5, base_delay=20.0, max_delay=65.0)
 def _call_gemini(prompt: str) -> str:
     import google.generativeai as genai
 

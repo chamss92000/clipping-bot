@@ -22,7 +22,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 60        # garde-fou sur le budget Actions
+    timeout-minutes: 90        # garde-fou sur le budget Actions
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,8 +33,8 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg + polices sous-titres
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-liberation
 
       - name: Install dependencies
         run: |

@@ -56,7 +56,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{settings.SUB_FONT},{settings.SUB_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&H64000000,-1,0,0,0,100,100,0,0,1,4,2,2,80,80,420,1
+Style: Default,{settings.SUB_FONT},{settings.SUB_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&H80000000,-1,0,0,0,100,100,0,0,1,{settings.SUB_OUTLINE_WIDTH},{settings.SUB_SHADOW},2,60,60,{settings.SUB_MARGIN_V},1
 
 [Events]
 Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
@@ -69,7 +69,10 @@ def _chunk_words(words: list[Word], n: int) -> list[list[Word]]:
 
 def _clean(word: str) -> str:
     # Échappe les accolades ASS et nettoie les espaces.
-    return word.strip().replace("{", "(").replace("}", ")")
+    token = word.strip().replace("{", "(").replace("}", ")")
+    if settings.SUB_UPPERCASE:
+        token = token.upper()
+    return token
 
 
 def build_ass(words: list[Word], out_ass: str | Path, clip_offset: float = 0.0) -> Path:
@@ -104,7 +107,8 @@ def build_ass(words: list[Word], out_ass: str | Path, clip_offset: float = 0.0) 
             for j, wj in enumerate(chunk):
                 token = _clean(wj.word)
                 if j == i:
-                    parts.append(f"{{\\c{hl}}}{token}{{\\c{primary}}}")
+                    # Mot actif : couleur highlight + léger "pop" (scale 112%).
+                    parts.append(f"{{\\c{hl}\\fscx112\\fscy112}}{token}{{\\c{primary}\\fscx100\\fscy100}}")
                 else:
                     parts.append(token)
             text = " ".join(parts)

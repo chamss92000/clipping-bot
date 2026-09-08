@@ -100,7 +100,7 @@ DRY_RUN: bool = _get_bool("DRY_RUN", False)
 #: Nombre max de candidats retenus par cycle (après agrégation/tri).
 MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 20)
 #: Nombre max de sources RÉELLEMENT traitées par cycle (borne coût CPU/Actions).
-MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 2)
+MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
 #: Nombre max de clips produits/publiés par cycle.
 MAX_CLIPS_PER_RUN: int = _get_int("MAX_CLIPS_PER_RUN", 3)
 #: Fuseau utilisé pour la planification des publications.
@@ -185,14 +185,16 @@ DOWNLOAD_MAX_HEIGHT: int = _get_int("DOWNLOAD_MAX_HEIGHT", 1080)
 #: Nombre de tentatives yt-dlp internes (indépendant de notre décorateur retry).
 DOWNLOAD_RETRIES: int = _get_int("DOWNLOAD_RETRIES", 3)
 #: Téléchargements de fragments HLS/DASH en parallèle (VODs Twitch/Kick).
-DOWNLOAD_CONCURRENCY: int = _get_int("DOWNLOAD_CONCURRENCY", 4)
+DOWNLOAD_CONCURRENCY: int = _get_int("DOWNLOAD_CONCURRENCY", 8)
 
 # --- Stratégie "longs VODs" (subathons de 20-40h impossibles à traiter en free tier) ---
 #: VOD de durée <= ce seuil => on télécharge/traite l'intégralité.
-SOURCE_FULL_MAX_DURATION_S: int = _get_int("SOURCE_FULL_MAX_DURATION_S", 5400)  # 90 min
-#: Au-delà, on échantillonne N fenêtres réparties dans le VOD.
-SAMPLE_WINDOWS: int = _get_int("SAMPLE_WINDOWS", 3)
-SAMPLE_WINDOW_S: int = _get_int("SAMPLE_WINDOW_S", 1200)  # 20 min
+#: 20 min : au-delà (VODs Twitch/Kick), on échantillonne (le download Twitch est lent).
+SOURCE_FULL_MAX_DURATION_S: int = _get_int("SOURCE_FULL_MAX_DURATION_S", 1200)
+#: Au-delà, on échantillonne N fenêtres COURTES réparties dans le VOD.
+#: Fenêtres courtes = download/transcription rapides (tient dans le budget Actions).
+SAMPLE_WINDOWS: int = _get_int("SAMPLE_WINDOWS", 2)
+SAMPLE_WINDOW_S: int = _get_int("SAMPLE_WINDOW_S", 240)  # 4 min
 #: On saute le début (mise en route, écran d'attente, pub) et la toute fin.
 SAMPLE_SKIP_INTRO_S: int = _get_int("SAMPLE_SKIP_INTRO_S", 300)
 SAMPLE_SKIP_OUTRO_S: int = _get_int("SAMPLE_SKIP_OUTRO_S", 180)
@@ -203,7 +205,7 @@ SOURCE_HARD_MAX_DURATION_S: int = _get_int("SOURCE_HARD_MAX_DURATION_S", 0)
 # ---------------------------------------------------------------------------
 # Bloc 3 — Transcription (Whisper)
 # ---------------------------------------------------------------------------
-WHISPER_MODEL: str = _get("WHISPER_MODEL", "base")
+WHISPER_MODEL: str = _get("WHISPER_MODEL", "small")  # small = bien plus précis que base
 WHISPER_LANGUAGE: str | None = _get("WHISPER_LANGUAGE")  # None => autodetect
 WHISPER_DEVICE: str = _get("WHISPER_DEVICE", "cpu")
 #: Type de calcul faster-whisper : "int8" (rapide/CPU), "int8_float16", "float32".
@@ -213,10 +215,10 @@ WHISPER_COMPUTE_TYPE: str = _get("WHISPER_COMPUTE_TYPE", "int8")
 # ---------------------------------------------------------------------------
 # Bloc 4 — Détection moments viraux (Gemini)
 # ---------------------------------------------------------------------------
-# gemini-1.5/2.5-flash retirés/fermés aux nouveaux comptes. On utilise l'alias
-# `gemini-flash-latest` (toujours le flash courant) pour éviter la valse des
-# versions retirées. Surchargeable via env (ex. gemini-3.6-flash).
-GEMINI_MODEL: str = _get("GEMINI_MODEL", "gemini-flash-latest")
+# flash-lite : quota free tier plus généreux (RPM plus élevé) que flash, et
+# largement suffisant pour de l'extraction JSON structurée. Alias "-latest" pour
+# éviter la valse des versions retirées. Surchargeable via env.
+GEMINI_MODEL: str = _get("GEMINI_MODEL", "gemini-flash-lite-latest")
 GEMINI_MAX_CLIPS: int = _get_int("GEMINI_MAX_CLIPS", 5)
 GEMINI_MIN_CLIPS: int = _get_int("GEMINI_MIN_CLIPS", 3)
 #: Fenêtre de durée acceptable d'un clip TikTok (secondes).
@@ -243,12 +245,18 @@ FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
 # ---------------------------------------------------------------------------
 # Bloc 6 — Sous-titres
 # ---------------------------------------------------------------------------
-SUB_FONT: str = _get("SUB_FONT", "Montserrat")
-SUB_FONT_SIZE: int = _get_int("SUB_FONT_SIZE", 64)
+# Police : "Arial" est dispo sur Windows (dev local) et aliasée sur le runner CI
+# (où on installe fonts-liberation qui fournit l'équivalent). Surchargée en CI.
+SUB_FONT: str = _get("SUB_FONT", "Arial")
+SUB_FONT_SIZE: int = _get_int("SUB_FONT_SIZE", 92)  # gros = style TikTok
 SUB_PRIMARY_COLOR: str = _get("SUB_PRIMARY_COLOR", "&H00FFFFFF")  # blanc (ASS BGR)
-SUB_HIGHLIGHT_COLOR: str = _get("SUB_HIGHLIGHT_COLOR", "&H0000F0FF")  # jaune
+SUB_HIGHLIGHT_COLOR: str = _get("SUB_HIGHLIGHT_COLOR", "&H0000F0FF")  # jaune vif
 SUB_OUTLINE_COLOR: str = _get("SUB_OUTLINE_COLOR", "&H00000000")  # noir
-SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 4)
+SUB_OUTLINE_WIDTH: int = _get_int("SUB_OUTLINE_WIDTH", 6)   # contour épais = lisible
+SUB_SHADOW: int = _get_int("SUB_SHADOW", 3)
+SUB_MARGIN_V: int = _get_int("SUB_MARGIN_V", 620)          # remonte le texte (zone safe TikTok)
+SUB_UPPERCASE: bool = _get_bool("SUB_UPPERCASE", True)     # MAJUSCULES = punch
+SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 3)
 
 
 # ---------------------------------------------------------------------------
