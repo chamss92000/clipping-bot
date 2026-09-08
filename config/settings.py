@@ -226,6 +226,9 @@ CLIP_MIN_DURATION_S: int = _get_int("CLIP_MIN_DURATION_S", 15)
 CLIP_MAX_DURATION_S: int = _get_int("CLIP_MAX_DURATION_S", 75)
 #: Rate limit free tier Gemini 1.5 Flash : 15 req/min => ~4s d'espacement.
 GEMINI_MIN_INTERVAL_S: float = _get_float("GEMINI_MIN_INTERVAL_S", 4.0)
+#: Seuil de qualité : on ignore les moments dont le score LLM est sous ce seuil
+#: (0-100). Mieux vaut peu de bons clips que beaucoup de moyens.
+GEMINI_MIN_SCORE: float = _get_float("GEMINI_MIN_SCORE", 65.0)
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +243,9 @@ FACE_SAMPLE_HZ: float = _get_float("FACE_SAMPLE_HZ", 4.0)
 FACE_DETECTION_CONFIDENCE: float = _get_float("FACE_DETECTION_CONFIDENCE", 0.5)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
+#: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
+AUDIO_LOUDNORM: bool = _get_bool("AUDIO_LOUDNORM", True)
+AUDIO_LOUDNORM_I: float = _get_float("AUDIO_LOUDNORM_I", -14.0)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +263,13 @@ SUB_SHADOW: int = _get_int("SUB_SHADOW", 3)
 SUB_MARGIN_V: int = _get_int("SUB_MARGIN_V", 620)          # remonte le texte (zone safe TikTok)
 SUB_UPPERCASE: bool = _get_bool("SUB_UPPERCASE", True)     # MAJUSCULES = punch
 SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 3)
+
+# Titre fixe (hook) affiché en haut du clip, toute la durée.
+TITLE_ENABLE: bool = _get_bool("TITLE_ENABLE", True)
+TITLE_FONT_SIZE: int = _get_int("TITLE_FONT_SIZE", 58)
+TITLE_MARGIN_V: int = _get_int("TITLE_MARGIN_V", 150)      # distance depuis le haut
+TITLE_UPPERCASE: bool = _get_bool("TITLE_UPPERCASE", False)
+TITLE_BOX: bool = _get_bool("TITLE_BOX", True)             # bandeau semi-opaque derrière
 
 
 # ---------------------------------------------------------------------------

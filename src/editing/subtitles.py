@@ -57,6 +57,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{settings.SUB_FONT},{settings.SUB_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&H80000000,-1,0,0,0,100,100,0,0,1,{settings.SUB_OUTLINE_WIDTH},{settings.SUB_SHADOW},2,60,60,{settings.SUB_MARGIN_V},1
+Style: Title,{settings.SUB_FONT},{settings.TITLE_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&HB0000000,-1,0,0,0,100,100,0,0,{3 if settings.TITLE_BOX else 1},4,1,8,90,90,{settings.TITLE_MARGIN_V},1
 
 [Events]
 Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
@@ -101,8 +102,25 @@ def _normalize_words(words: list[Word]) -> list[Word]:
     return out
 
 
-def build_ass(words: list[Word], out_ass: str | Path, clip_offset: float = 0.0) -> Path:
-    """Génère un fichier ASS mot-par-mot surligné pour un clip démarrant à clip_offset."""
+def _title_text(title: str) -> str:
+    t = title.strip().replace("{", "(").replace("}", ")").replace("\n", " ")
+    if settings.TITLE_UPPERCASE:
+        t = t.upper()
+    return t
+
+
+def build_ass(
+    words: list[Word],
+    out_ass: str | Path,
+    clip_offset: float = 0.0,
+    title: str | None = None,
+    clip_duration: float | None = None,
+) -> Path:
+    """Génère l'ASS : sous-titres mot-par-mot animés + titre fixe en haut.
+
+    :param title: hook affiché statiquement en haut, toute la durée du clip.
+    :param clip_duration: durée du clip (pour la fin de l'événement titre).
+    """
     out_ass = Path(out_ass)
     out_ass.parent.mkdir(parents=True, exist_ok=True)
 
@@ -119,6 +137,13 @@ def build_ass(words: list[Word], out_ass: str | Path, clip_offset: float = 0.0) 
     hl = settings.SUB_HIGHLIGHT_COLOR
     primary = settings.SUB_PRIMARY_COLOR
     events: list[str] = []
+
+    # Titre fixe en haut, sur toute la durée du clip.
+    if settings.TITLE_ENABLE and title:
+        end_t = clip_duration if clip_duration else (rel[-1].end if rel else 30.0)
+        events.append(
+            f"Dialogue: 0,{_ass_time(0)},{_ass_time(end_t + 0.5)},Title,,0,0,0,,{_title_text(title)}"
+        )
 
     for chunk in _chunk_words(rel, settings.SUB_MAX_WORDS_PER_LINE):
         if not chunk:
@@ -160,12 +185,21 @@ def burn_subtitles(clip_path: str | Path, ass_path: str | Path, out_path: str | 
     with tempfile.TemporaryDirectory() as td:
         local_ass = Path(td) / "subs.ass"
         shutil.copyfile(ass_path, local_ass)
+        # Audio : loudnorm (standard TikTok ~ -14 LUFS) => ré-encodage AAC ;
+        # sinon simple copie.
+        if settings.AUDIO_LOUDNORM:
+            audio_args = [
+                "-af", f"loudnorm=I={settings.AUDIO_LOUDNORM_I}:TP=-1.5:LRA=11",
+                "-c:a", "aac", "-b:a", "128k",
+            ]
+        else:
+            audio_args = ["-c:a", "copy"]
         cmd = [
             settings.FFMPEG_BIN, "-y", "-i", str(clip_path),
             "-vf", "subtitles=subs.ass",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-movflags", "+faststart",
-            "-c:a", "copy",
+            *audio_args,
             str(out_path),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=td)

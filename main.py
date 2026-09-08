@@ -89,7 +89,13 @@ def _process_source(cand, storage, state) -> int:
 
             try:
                 make_vertical_clip(dl.path, local_start, local_end, raw_clip)
-                ass = build_ass(words, settings.SUBS_DIR / f"{base}.ass", clip_offset=m.start)
+                ass = build_ass(
+                    words,
+                    settings.SUBS_DIR / f"{base}.ass",
+                    clip_offset=m.start,
+                    title=m.hook,                       # titre fixe en haut
+                    clip_duration=local_end - local_start,
+                )
                 burn_subtitles(raw_clip, ass, final_clip)
             except Exception as exc:  # noqa: BLE001 - un moment raté n'annule pas les autres
                 log.error("  Montage échoué (%s @%.0f) : %s", cand.uid, m.start, exc)
@@ -171,6 +177,15 @@ def run(detect_only: bool = False) -> int:
     except Exception as exc:  # noqa: BLE001
         log.error("Storage Drive indisponible (%s) — cycle interrompu.", exc)
         return 1
+
+    # --- Ordre de traitement : priorité aux sources RAPIDES/COMPLÈTES --------
+    # Une vidéo téléchargeable en entier (courte, ex. YouTube) donne des clips
+    # plus cohérents et un run plus rapide/moins cher qu'un VOD de 48h échantillonné.
+    def _cost(c) -> tuple[int, float]:
+        sampled = c.duration_s is not None and c.duration_s > settings.SOURCE_FULL_MAX_DURATION_S
+        return (1 if sampled else 0, -c.score)
+
+    candidates = sorted(candidates, key=_cost)
 
     # --- Traitement des sources --------------------------------------------
     sources_done = 0

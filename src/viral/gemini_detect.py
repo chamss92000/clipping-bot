@@ -68,8 +68,18 @@ Critères d'un bon moment viral :
 Contraintes STRICTES sur chaque clip :
 - durée entre {clip_min} et {clip_max} secondes
 - `start` et `end` en secondes (décimales), dans [0, {duration:.0f}]
-- commence le clip LÉGÈREMENT avant l'accroche pour ne pas couper le contexte
-- les moments ne doivent pas se chevaucher
+- le clip DOIT commencer sur un DÉBUT DE PHRASE (jamais au milieu d'une phrase)
+  et se terminer sur une fin de phrase — un extrait auto-suffisant, compréhensible seul
+- commence légèrement avant l'accroche pour garder le contexte
+- les 3 premières secondes doivent accrocher (pas de blanc / pas de mou au début)
+- les moments ne doivent PAS se chevaucher
+
+Le `score` (0-100) reflète le VRAI potentiel viral. Sois SÉVÈRE : ne mets un
+score élevé que si le moment est réellement fort. Un contenu plat = score bas.
+
+Le `hook` est un TITRE d'accroche court (max ~70 caractères) dans la LANGUE de
+la vidéo, qui crée de la CURIOSITÉ (question, cliffhanger, promesse) sans
+spoiler la chute. Pas de ponctuation finale superflue.
 
 Réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, au format :
 [
@@ -77,7 +87,7 @@ Réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, au format :
     "start": 12.5,
     "end": 45.0,
     "score": 87,
-    "hook": "titre accrocheur court dans la langue de la vidéo",
+    "hook": "titre court qui donne envie de regarder",
     "hashtags": ["#tag1", "#tag2", "#tag3"],
     "reason": "pourquoi ce moment est viral (1 phrase)"
   }}
@@ -193,6 +203,12 @@ def _sanitize(raw_moments: list, duration: float) -> list[ViralMoment]:
                 reason=str(m.get("reason", "")).strip()[:300],
             )
         )
+
+    # Seuil de qualité : on écarte les moments faibles (qualité > quantité).
+    before = len(moments)
+    moments = [m for m in moments if m.score >= settings.GEMINI_MIN_SCORE]
+    if before and not moments:
+        log.info("Viral: tous les moments sous le seuil de qualité (%.0f) — aucun clip.", settings.GEMINI_MIN_SCORE)
 
     # Tri par score décroissant, plafonné.
     moments.sort(key=lambda x: x.score, reverse=True)
