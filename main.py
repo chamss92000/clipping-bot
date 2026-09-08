@@ -113,7 +113,25 @@ def _process_source(cand, storage, state) -> int:
                     storage.upload(cap_file, cap_file.name, subdir=settings.DRIVE_SUBDIR_CLIPS)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("  Upload Drive échoué : %s", exc)
-                log.info("  ✅ Clip prêt à publier (manuel) : %s", final_clip.name)
+                log.info("  ✅ Clip prêt à publier (manuel TikTok) : %s", final_clip.name)
+
+                # Publication auto YouTube Shorts (en plus du manuel TikTok).
+                yt_status = None
+                if settings.YOUTUBE_UPLOAD_ENABLE and state.youtube_left() > 0:
+                    try:
+                        from src.publisher.youtube import upload_short
+
+                        yt = upload_short(final_clip, m.hook, m.hashtags, creator=cand.creator)
+                        yt_status = yt.status
+                        if yt.status == "posted":
+                            state.record_youtube_upload()
+                            log.info("  ✅ Short YouTube publié : %s", yt.post_id)
+                    except Exception as exc:  # noqa: BLE001 - YT KO n'annule pas le manuel
+                        log.warning("  Upload YouTube échoué : %s", exc)
+                        yt_status = "failed"
+                elif settings.YOUTUBE_UPLOAD_ENABLE:
+                    log.info("  (quota YouTube du jour atteint — Short non publié)")
+
                 state.published.append(
                     {
                         "uid": cand.uid,
@@ -121,6 +139,7 @@ def _process_source(cand, storage, state) -> int:
                         "hook": m.hook,
                         "hashtags": m.hashtags,
                         "status": "ready_manual",
+                        "youtube": yt_status,
                     }
                 )
                 produced += 1

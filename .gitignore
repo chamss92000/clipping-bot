@@ -14,6 +14,7 @@ credentials*.json
 drive_credentials.json
 oauth_client.json
 token.json
+*token*.json
 
 # Artefacts runtime
 /tmp/

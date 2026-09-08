@@ -282,6 +282,19 @@ TITLE_BOX: bool = _get_bool("TITLE_BOX", True)             # bandeau semi-opaque
 #                   domaine vérifié + audit pour le public ; voir authorize_tiktok).
 PUBLISH_MODE: str = _get("PUBLISH_MODE", "manual")
 
+# --- Publication auto YouTube Shorts (gratuit, public, sans audit) ---
+# Active l'upload automatique de chaque clip en Short public sur TA chaîne.
+# En plus de la livraison manuelle TikTok (clip + caption sur Drive).
+YOUTUBE_UPLOAD_ENABLE: bool = _get_bool("YOUTUBE_UPLOAD_ENABLE", True)
+# OAuth : réutilise le client GOOGLE_OAUTH_CLIENT_ID/SECRET + un refresh token
+# dédié au scope youtube.upload (obtenu via `authorize_youtube`).
+YOUTUBE_REFRESH_TOKEN: str | None = _get("YOUTUBE_REFRESH_TOKEN")
+YOUTUBE_OAUTH_TOKEN_FILE: str | None = _get("YOUTUBE_OAUTH_TOKEN_FILE", "./youtube_token.json")
+YOUTUBE_PRIVACY: str = _get("YOUTUBE_PRIVACY", "public")  # public | unlisted | private
+YOUTUBE_CATEGORY_ID: str = _get("YOUTUBE_CATEGORY_ID", "20")  # 20 = Gaming
+#: Garde-fou quota : l'upload coûte ~1600 unités (quota /jour = 10000 ⇒ ~6 max).
+YOUTUBE_DAILY_LIMIT: int = _get_int("YOUTUBE_DAILY_LIMIT", 5)
+
 # Upload-Post free ne permet PAS TikTok => on utilise l'API officielle TikTok.
 TIKTOK_CLIENT_KEY: str | None = _get("TIKTOK_CLIENT_KEY")
 TIKTOK_CLIENT_SECRET: str | None = _get("TIKTOK_CLIENT_SECRET")

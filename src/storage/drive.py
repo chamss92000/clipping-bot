@@ -69,6 +69,8 @@ class State:
     queue: list[dict[str, Any]] = field(default_factory=list)
     published: list[dict[str, Any]] = field(default_factory=list)
     uploads_this_month: dict[str, int] = field(default_factory=dict)
+    #: Compteur d'uploads YouTube par jour (YYYY-MM-DD) — garde-fou quota API.
+    youtube_uploads: dict[str, int] = field(default_factory=dict)
     updated_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -97,6 +99,18 @@ class State:
     def record_upload(self) -> None:
         k = self.month_key()
         self.uploads_this_month[k] = self.uploads_this_month.get(k, 0) + 1
+
+    def _day_key(self, when: datetime | None = None) -> str:
+        return (when or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+
+    def youtube_left(self, daily_limit: int | None = None) -> int:
+        limit = daily_limit if daily_limit is not None else settings.YOUTUBE_DAILY_LIMIT
+        used = self.youtube_uploads.get(self._day_key(), 0)
+        return max(0, limit - used)
+
+    def record_youtube_upload(self) -> None:
+        k = self._day_key()
+        self.youtube_uploads[k] = self.youtube_uploads.get(k, 0) + 1
 
 
 class DriveError(RuntimeError):

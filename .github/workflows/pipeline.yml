@@ -67,6 +67,9 @@ jobs:
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           TIKTOK_PRIVACY_LEVEL: ${{ vars.TIKTOK_PRIVACY_LEVEL || 'SELF_ONLY' }}
+          # --- Bloc 7bis (YouTube Shorts auto) ---
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_UPLOAD_ENABLE: ${{ vars.YOUTUBE_UPLOAD_ENABLE || 'true' }}
           # --- Tuning ---
           LOG_LEVEL: INFO
           DRY_RUN: ${{ inputs.dry_run }}
