@@ -56,7 +56,11 @@ def _process_source(cand, storage, state) -> int:
 
     for dl in downloads:
         offset = dl.window[0] if dl.window else 0.0
-        transcript = transcribe(dl.path, source_offset=offset)
+        try:
+            transcript = transcribe(dl.path, source_offset=offset)
+        except Exception as exc:  # noqa: BLE001 - une fenêtre KO n'annule pas les autres
+            log.error("  Transcription échouée (%s) : %s", getattr(dl, "path", "?"), exc)
+            continue
         if not transcript.segments:
             log.info("  %s : transcript vide, fenêtre ignorée.", cand.uid)
             continue

@@ -200,6 +200,12 @@ def download(
     path = _resolve_output_path(info, dest_dir)
 
     duration, width, height = probe_media(path)
+    # Un extrait vide/corrompu (ex. fenêtre en toute fin de VOD indisponible)
+    # revient en 0s / 0x0 : on rejette pour ne pas planter la transcription.
+    if duration <= 0 or width <= 0 or height <= 0:
+        raise DownloadError(
+            f"Téléchargement vide/invalide ({duration:.0f}s {width}x{height}) — fenêtre ignorée"
+        )
     log.info("OK %s : %.0fs %dx%d (%s)", candidate.uid, duration, width, height, path.name)
 
     return DownloadResult(

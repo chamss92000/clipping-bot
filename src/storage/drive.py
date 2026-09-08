@@ -205,7 +205,9 @@ class DriveStorage:
         return created["id"]
 
     # --- exécution robuste ---
-    @retry(exceptions=(HttpError, ConnectionError, TimeoutError), attempts=4)
+    # OSError couvre ConnectionError/TimeoutError ET ssl.SSLError/SSLEOFError
+    # (hoquets réseau pendant un upload) : tout ça est retenté.
+    @retry(exceptions=(HttpError, OSError), attempts=4)
     def _execute(self, request):
         try:
             return request.execute()
