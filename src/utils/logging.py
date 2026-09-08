@@ -10,6 +10,7 @@ attache optionnellement un `FileHandler` via `attach_file_handler`.
 
 from __future__ import annotations
 
+import io
 import logging
 import sys
 from pathlib import Path
@@ -27,7 +28,14 @@ def _configure_root() -> None:
         return
     root = logging.getLogger("clipping")
     root.setLevel(getattr(logging, settings.LOG_LEVEL, logging.INFO))
-    handler = logging.StreamHandler(stream=sys.stderr)
+    # Les titres de vidéos contiennent souvent des emojis : sur une console
+    # Windows (cp1252) un print/log brut lève UnicodeEncodeError et casse le run.
+    # On force un flux UTF-8 tolérant.
+    try:
+        stream = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:  # noqa: BLE001 - stderr peut être déjà encapsulé
+        stream = sys.stderr
+    handler = logging.StreamHandler(stream=stream)
     handler.setFormatter(logging.Formatter(_FMT, datefmt=_DATEFMT))
     root.addHandler(handler)
     root.propagate = False

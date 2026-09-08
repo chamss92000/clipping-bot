@@ -22,7 +22,16 @@ from . import detect_all
 _ALIASES = {p.value: p for p in Platform}
 
 
+def _force_utf8_stdout() -> None:
+    """Titres avec emojis + console Windows cp1252 = UnicodeEncodeError."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main(argv: list[str]) -> int:
+    _force_utf8_stdout()
     args = [a for a in argv if not a.startswith("--")]
     as_json = "--json" in argv
 

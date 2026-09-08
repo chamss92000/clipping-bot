@@ -216,6 +216,8 @@ def run(detect_only: bool = False) -> int:
     # --- Traitement des sources --------------------------------------------
     sources_done = 0
     clips_total = 0
+    published_before = len(state.published)
+    chosen: list = []
     for cand in candidates:
         if sources_done >= settings.MAX_SOURCES_PER_RUN:
             log.info("Limite MAX_SOURCES_PER_RUN atteinte.")
@@ -228,6 +230,7 @@ def run(detect_only: bool = False) -> int:
             break
 
         log.info("→ Traitement %s (%s)", cand.uid, cand.title[:60])
+        chosen.append(cand)
         try:
             clips_total += _process_source(cand, storage, state)
         except Exception as exc:  # noqa: BLE001 - isole la panne d'une source
@@ -236,6 +239,25 @@ def run(detect_only: bool = False) -> int:
             state.mark_processed(cand.uid)
             storage.save_state(state)  # sauvegarde incrémentale (résilience)
             sources_done += 1
+
+    # --- Rapport de run sur Drive (pour vérifier les sources d'un coup d'œil) --
+    try:
+        from src.detection import LAST_REJECTED
+        from src.report import build_report
+
+        report = build_report(
+            candidates=sorted(candidates, key=lambda c: c.score, reverse=True),
+            rejected=LAST_REJECTED,
+            chosen=chosen,
+            clips=state.published[published_before:],
+            youtube_left=state.youtube_left(),
+        )
+        report_path = settings.WORK_DIR / "rapport.md"
+        report_path.write_text(report, encoding="utf-8")
+        storage.upload(report_path, "rapport.md")
+        log.info("Rapport déposé sur Drive : rapport.md")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Rapport non généré : %s", exc)
 
     # --- Log sur Drive ------------------------------------------------------
     try:

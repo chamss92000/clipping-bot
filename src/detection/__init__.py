@@ -19,12 +19,17 @@ from . import kick, twitch, youtube
 
 log = get_logger("detection")
 
-#: Pondération grossière pour équilibrer les échelles de score entre sources.
+#: Les scores sont maintenant sur une échelle 0-100 commune (vélocité YouTube /
+#: audience live Twitch-Kick), donc plus besoin de rééquilibrer. On garde juste
+#: une légère décote Kick (données moins fiables).
 _PLATFORM_WEIGHT: dict[Platform, float] = {
     Platform.YOUTUBE: 1.0,
     Platform.TWITCH: 1.0,
-    Platform.KICK: 0.9,
+    Platform.KICK: 0.95,
 }
+
+#: Sources écartées au dernier `detect_all` — [(candidat, raison)], pour le rapport.
+LAST_REJECTED: list[tuple[VideoCandidate, str]] = []
 
 _SOURCES = {
     Platform.YOUTUBE: youtube.detect,
@@ -80,17 +85,17 @@ def detect_all(
         log.info("Source %s : %d candidats", platform.value, len(found))
 
     # Filtre qualité : on écarte le contenu recyclé/narration avant tout traitement.
+    LAST_REJECTED.clear()
     kept: list[VideoCandidate] = []
-    rejected = 0
     for c in all_candidates:
         reason = _is_low_quality(c)
         if reason:
-            rejected += 1
+            LAST_REJECTED.append((c, reason))
             log.info("Écarté (%s) : %s — %s", reason, c.creator, c.title[:60])
         else:
             kept.append(c)
-    if rejected:
-        log.info("Filtre qualité : %d source(s) écartée(s)", rejected)
+    if LAST_REJECTED:
+        log.info("Filtre qualité : %d source(s) écartée(s)", len(LAST_REJECTED))
 
     # Déduplication cross-source par uid (sécurité ; peu probable de collision).
     unique: dict[str, VideoCandidate] = {}

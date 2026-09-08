@@ -148,8 +148,11 @@ def _vod_to_candidate(vod: dict, stream_ctx: dict) -> VideoCandidate | None:
         return None
     views = int(vod.get("view_count", 0))
     live_viewers = int(stream_ctx.get("viewer_count", 0))
-    # Score : notoriété live actuelle (viewers) domine, vues VOD en bonus.
-    score = math.log10(max(live_viewers, 10)) * 1.5 + math.log10(max(views, 10))
+    # Score de tendance 0-100, MÊME ÉCHELLE que YouTube (sinon une plateforme
+    # gagne toujours) : l'audience live actuelle est le signal de "chaud".
+    score = min(100.0, 20.0 * math.log10(live_viewers + 1.0))
+    score += min(6.0, math.log10(max(views, 1)))  # petit bonus notoriété du VOD
+    score = round(min(100.0, score), 2)
 
     return VideoCandidate(
         platform=Platform.TWITCH,
@@ -161,7 +164,7 @@ def _vod_to_candidate(vod: dict, stream_ctx: dict) -> VideoCandidate | None:
         duration_s=duration,
         published_at=vod.get("created_at") or vod.get("published_at"),
         thumbnail=(vod.get("thumbnail_url") or "").replace("%{width}", "640").replace("%{height}", "360"),
-        score=round(score, 4),
+        score=score,
         extra={
             "user_id": vod.get("user_id"),
             "game_name": stream_ctx.get("game_name"),

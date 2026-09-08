@@ -44,20 +44,32 @@ def _parse_iso_duration(iso: str) -> int:
     return h * 3600 + mi * 60 + s
 
 
-def _freshness_weight(published_at: str | None) -> float:
-    """Poids ∈ [0.3, 1.0] : 1.0 pour <24h, décroit sur ~7 jours."""
+def _age_hours(published_at: str | None) -> float | None:
     if not published_at:
-        return 0.6
+        return None
     try:
         dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
     except ValueError:
-        return 0.6
-    age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-    if age_h <= 24:
-        return 1.0
-    if age_h >= 24 * 7:
-        return 0.3
-    return 1.0 - 0.7 * ((age_h - 24) / (24 * 6))
+        return None
+    return max(1.0, (datetime.now(timezone.utc) - dt).total_seconds() / 3600)
+
+
+def _trend_score(views: int, published_at: str | None, likes: int | None, comments: int | None) -> float:
+    """Score de tendance 0-100, comparable entre plateformes.
+
+    Le vrai signal de "tendance" n'est pas le nombre de vues brut mais la
+    **vélocité** (vues/heure) : une vidéo à 100k vues en 3h explose bien plus
+    qu'une à 1M vues en 3 semaines. On y ajoute un petit bonus d'engagement
+    (taux de likes), signe d'un contenu qui fait réagir.
+    """
+    age_h = _age_hours(published_at) or 72.0
+    velocity = views / age_h                      # vues par heure
+    score = min(100.0, 20.0 * math.log10(velocity + 1.0))
+    if likes and views:
+        score += min(8.0, (likes / views) * 200.0)   # taux de likes (~2-6% => +4 à +8)
+    if comments and views:
+        score += min(4.0, (comments / views) * 800.0)
+    return round(min(100.0, score), 2)
 
 
 def _build_client():
@@ -106,7 +118,9 @@ def _to_candidate(item: dict) -> VideoCandidate | None:
         return None
 
     published_at = snippet.get("publishedAt")
-    score = math.log10(max(views, 10)) * _freshness_weight(published_at)
+    likes = int(stats.get("likeCount", 0)) if stats.get("likeCount") else None
+    comments = int(stats.get("commentCount", 0)) if stats.get("commentCount") else None
+    score = _trend_score(views, published_at, likes, comments)
 
     thumbs = snippet.get("thumbnails", {})
     thumb = (thumbs.get("maxres") or thumbs.get("high") or thumbs.get("default") or {}).get("url")
@@ -125,8 +139,11 @@ def _to_candidate(item: dict) -> VideoCandidate | None:
         extra={
             "channel_id": snippet.get("channelId"),
             "category_id": snippet.get("categoryId"),
-            "like_count": int(stats.get("likeCount", 0)) if stats.get("likeCount") else None,
-            "comment_count": int(stats.get("commentCount", 0)) if stats.get("commentCount") else None,
+            "like_count": likes,
+            "comment_count": comments,
+            #: vues/heure — c'est LE signal de tendance, affiché dans le rapport.
+            "views_per_hour": round(views / (_age_hours(published_at) or 72.0)),
+            "age_hours": round(_age_hours(published_at) or 0),
             "tags": snippet.get("tags", []),
         },
     )

@@ -136,7 +136,10 @@ def _vod_to_candidate(vod: dict, channel: dict, live_viewers: int) -> VideoCandi
         or ""
     )
     creator = (channel.get("user") or {}).get("username") or channel.get("slug", "")
-    score = math.log10(max(live_viewers, 10)) * 1.5 + math.log10(max(views, 10))
+    # Même échelle 0-100 que YouTube/Twitch (comparaison inter-plateformes juste).
+    score = min(100.0, 20.0 * math.log10(live_viewers + 1.0))
+    score += min(6.0, math.log10(max(views, 1)))
+    score = round(min(100.0, score), 2)
 
     return VideoCandidate(
         platform=Platform.KICK,
@@ -148,7 +151,7 @@ def _vod_to_candidate(vod: dict, channel: dict, live_viewers: int) -> VideoCandi
         duration_s=duration,
         published_at=vod.get("created_at") or vod.get("start_time"),
         thumbnail=(vod.get("thumbnail") or {}).get("src") if isinstance(vod.get("thumbnail"), dict) else vod.get("thumbnail"),
-        score=round(score, 4),
+        score=score,
         extra={
             "slug": channel.get("slug"),
             "live_viewer_count": live_viewers,
