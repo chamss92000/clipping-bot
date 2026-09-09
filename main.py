@@ -387,6 +387,18 @@ def run(detect_only: bool = False) -> int:
     except Exception as exc:  # noqa: BLE001
         log.warning("Rapport non généré : %s", exc)
 
+    # --- Notification e-mail (seulement si de nouveaux clips ont été déposés) --
+    new_clips = state.published[published_before:]
+    if new_clips and settings.NOTIFY_EMAIL_ENABLE and not settings.DRY_RUN:
+        try:
+            from src.notify import build_clips_email, send_email
+
+            folder_ids = {"intl": storage._root, "fr": market_roots.get("fr")}
+            subject, html, text = build_clips_email(new_clips, folder_ids)
+            send_email(subject, html, text)
+        except Exception as exc:  # noqa: BLE001 - une notif ratée ne casse rien
+            log.warning("Notification e-mail non envoyée : %s", exc)
+
     # --- Log sur Drive ------------------------------------------------------
     try:
         if log_path.exists():

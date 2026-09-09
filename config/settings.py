@@ -166,6 +166,14 @@ DRIVE_CLEANUP_HARD_DELETE: bool = _get_bool("DRIVE_CLEANUP_HARD_DELETE", True)
 UPLOADPOST_API_KEY: str | None = _get("UPLOADPOST_API_KEY")
 UPLOADPOST_USER: str | None = _get("UPLOADPOST_USER")
 
+# --- Notification e-mail (récap quand des clips sont déposés sur Drive) ---
+NOTIFY_EMAIL_ENABLE: bool = _get_bool("NOTIFY_EMAIL_ENABLE", False)
+NOTIFY_EMAIL_TO: str | None = _get("NOTIFY_EMAIL_TO", "ce.boutajar@gmail.com")
+SMTP_HOST: str = _get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT: int = _get_int("SMTP_PORT", 465)  # 465 = SSL, 587 = STARTTLS
+SMTP_USER: str | None = _get("SMTP_USER")       # adresse d'envoi (compte Gmail)
+SMTP_PASSWORD: str | None = _get("SMTP_PASSWORD")  # mot de passe d'APPLICATION Gmail
+
 
 # ---------------------------------------------------------------------------
 # Bloc 1 — Détection

@@ -114,6 +114,11 @@ jobs:
           MAX_CLIPS_PER_RUN: ${{ vars.MAX_CLIPS_PER_RUN || '4' }}
           # YouTube comme source : off par defaut (anti-bot en CI). Mets 'true' + cookies pour l'activer.
           YOUTUBE_SOURCE_ENABLE: ${{ vars.YOUTUBE_SOURCE_ENABLE || 'false' }}
+          # --- Notification e-mail (récap des clips déposés) ---
+          NOTIFY_EMAIL_ENABLE: ${{ vars.NOTIFY_EMAIL_ENABLE || 'true' }}
+          NOTIFY_EMAIL_TO: ${{ vars.NOTIFY_EMAIL_TO || 'ce.boutajar@gmail.com' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           # --- Tuning ---
           LOG_LEVEL: INFO
           DRY_RUN: ${{ inputs.dry_run }}
