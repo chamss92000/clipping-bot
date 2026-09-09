@@ -84,7 +84,13 @@ def detect_all(
     :param enabled: sous-ensemble de plateformes à interroger (défaut : toutes).
     :param max_candidates: plafond de la file retournée (défaut settings).
     """
-    enabled = enabled or list(_SOURCES.keys())
+    if enabled is None:
+        enabled = list(_SOURCES.keys())
+        # YouTube n'est pas téléchargeable en CI (anti-bot) : on ne le détecte
+        # que s'il est explicitement activé, pour ne pas gaspiller d'essais.
+        if not settings.YOUTUBE_SOURCE_ENABLE and Platform.YOUTUBE in enabled:
+            enabled.remove(Platform.YOUTUBE)
+            log.info("YouTube désactivé comme source (YOUTUBE_SOURCE_ENABLE=false).")
     max_candidates = max_candidates or settings.MAX_CANDIDATES
 
     all_candidates: list[VideoCandidate] = []

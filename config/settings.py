@@ -97,8 +97,9 @@ for _d in (WORK_DIR, DOWNLOAD_DIR, CLIPS_DIR, SUBS_DIR):
 # ---------------------------------------------------------------------------
 LOG_LEVEL: str = _get("LOG_LEVEL", "INFO").upper()
 DRY_RUN: bool = _get_bool("DRY_RUN", False)
-#: Nombre max de candidats retenus par cycle (après agrégation/tri).
-MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 20)
+#: Nombre max de candidats retenus par cycle (après agrégation/tri). Assez large
+#: pour que des sources FR (moins de vues que les gros clips EN) survivent au tri.
+MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 80)
 #: Nombre max de sources ayant RÉELLEMENT produit des clips par cycle.
 MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
 #: Nombre max de sources ESSAYÉES par cycle : si une source échoue (blocage
@@ -106,8 +107,12 @@ MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
 MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 12)
 #: Une source n'est définitivement abandonnée qu'après ce nombre d'échecs.
 MAX_SOURCE_FAILURES: int = _get_int("MAX_SOURCE_FAILURES", 3)
-#: Nombre max de clips produits/publiés par cycle.
-MAX_CLIPS_PER_RUN: int = _get_int("MAX_CLIPS_PER_RUN", 3)
+#: Nombre max de clips produits/publiés par cycle (toutes chaînes confondues).
+MAX_CLIPS_PER_RUN: int = _get_int("MAX_CLIPS_PER_RUN", 4)
+#: Objectif de clips PAR MARCHÉ (fr / intl). Chaque chaîne a sa place réservée,
+#: indépendamment du classement (sinon les clips EN raflent tout et le FR ne
+#: sort jamais). Total réel = CLIPS_PER_MARKET × nombre de marchés actifs.
+CLIPS_PER_MARKET: int = _get_int("CLIPS_PER_MARKET", 2)
 #: Fuseau utilisé pour la planification des publications.
 TIMEZONE: str = _get("TIMEZONE", "Europe/Paris")
 
@@ -166,6 +171,12 @@ UPLOADPOST_USER: str | None = _get("UPLOADPOST_USER")
 # Bloc 1 — Détection
 # ---------------------------------------------------------------------------
 # YouTube
+#: YouTube comme SOURCE de clips. DÉSACTIVÉ par défaut : en CI (IP datacenter),
+#: yt-dlp est bloqué par l'anti-bot ("Sign in to confirm you're not a bot"), donc
+#: on détecte des vidéos qu'on ne peut pas télécharger => essais gaspillés. On
+#: s'appuie sur Twitch/Kick (téléchargeables). Réactive-le en local, ou en CI si
+#: tu fournis un fichier cookies valide (secret YOUTUBE_COOKIES).
+YOUTUBE_SOURCE_ENABLE: bool = _get_bool("YOUTUBE_SOURCE_ENABLE", False)
 YOUTUBE_REGION: str = _get("YOUTUBE_REGION", "FR")
 #: Catégories YouTube ciblées (IDs officiels).
 #: 20=Gaming, 24=Entertainment, 17=Sports, 23=Comedy, 22=People&Blogs.
@@ -198,7 +209,7 @@ TWITCH_MIN_VOD_DURATION_S: int = _get_int("TWITCH_MIN_VOD_DURATION_S", 300)
 KICK_CHANNELS: list[str] = _get_list("KICK_CHANNELS", ["xqc", "trainwreckstv", "adin"])
 #: Chaînes Kick francophones (leurs clips partent dans le marché "fr").
 KICK_FR_CHANNELS: list[str] = _get_list(
-    "KICK_FR_CHANNELS", ["kamet0", "amine", "billy", "adphigh"]
+    "KICK_FR_CHANNELS", ["kamet0", "amine", "billy"]
 )
 KICK_MIN_VIEWERS: int = _get_int("KICK_MIN_VIEWERS", 2000)
 KICK_VODS_PER_CHANNEL: int = _get_int("KICK_VODS_PER_CHANNEL", 2)

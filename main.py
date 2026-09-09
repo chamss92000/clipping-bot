@@ -110,7 +110,7 @@ def _process_source(
                     len(words), settings.MIN_WORDS_PER_WINDOW,
                 )
                 continue
-            moments = detect_moments(transcript, dl.duration_s + offset)
+            moments = detect_moments(transcript, dl.duration_s + offset, lang=market)
 
         for i, m in enumerate(moments):
             if produced >= budget:
@@ -266,9 +266,11 @@ def run(detect_only: bool = False) -> int:
     candidates = sorted(candidates, key=_cost)
 
     # --- Traitement des sources --------------------------------------------
-    # On s'arrête quand on a produit MAX_CLIPS_PER_RUN clips (le vrai objectif),
-    # ou après trop d'essais infructueux. En mode "clips", 1 candidat = 1 clip ;
-    # en mode "vods", 1 candidat peut en produire plusieurs.
+    # QUOTA PAR MARCHÉ : chaque marché (fr / intl) a son propre objectif de
+    # clips, indépendant du classement global. Sinon les gros clips anglophones
+    # (vélocité de vues énorme) raflent toutes les places et le FR ne sort jamais.
+    targets = {mk: settings.CLIPS_PER_MARKET for mk in settings.MARKETS}
+    produced_by_market = {mk: 0 for mk in settings.MARKETS}
     attempts = 0
     clips_total = 0
     published_before = len(state.published)
@@ -276,8 +278,8 @@ def run(detect_only: bool = False) -> int:
     #: Plateformes qui bloquent (anti-bot) : abandonnées pour tout ce cycle.
     blocked_platforms: set = set()
     for cand in candidates:
-        if clips_total >= settings.MAX_CLIPS_PER_RUN:
-            log.info("Objectif atteint : %d clips produits.", clips_total)
+        if all(produced_by_market[mk] >= targets[mk] for mk in targets):
+            log.info("Objectif atteint : %s", dict(produced_by_market))
             break
         if attempts >= settings.MAX_SOURCE_ATTEMPTS_PER_RUN:
             log.warning("Limite d'essais atteinte (%d) — %d clips produits.", attempts, clips_total)
@@ -293,6 +295,11 @@ def run(detect_only: bool = False) -> int:
         if market not in settings.MARKETS:
             log.debug("  %s ignoré (marché '%s' désactivé).", cand.uid, market)
             continue
+        if produced_by_market[market] >= targets[market]:
+            # Ce marché a son compte : on saute (sans consommer d'essai) pour
+            # aller chercher un candidat de l'AUTRE marché plus bas dans la liste.
+            log.debug("  %s ignoré (marché '%s' déjà complet).", cand.uid, market)
+            continue
         clip_root = market_roots.get(market)
 
         log.info("→ Traitement %s [%s] (%s)", cand.uid, market, cand.title[:60])
@@ -300,7 +307,7 @@ def run(detect_only: bool = False) -> int:
         attempts += 1
         produced = 0
         platform_blocked = False
-        budget = settings.MAX_CLIPS_PER_RUN - clips_total
+        budget = targets[market] - produced_by_market[market]
         try:
             produced = _process_source(
                 cand, storage, state, budget=budget, market=market, clip_root=clip_root
@@ -321,6 +328,7 @@ def run(detect_only: bool = False) -> int:
 
         clips_total += produced
         if produced > 0:
+            produced_by_market[market] = produced_by_market.get(market, 0) + produced
             # Succès : la source est consommée définitivement.
             state.mark_processed(cand.uid)
         elif platform_blocked:

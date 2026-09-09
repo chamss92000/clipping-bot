@@ -77,9 +77,11 @@ Contraintes STRICTES sur chaque clip :
 Le `score` (0-100) reflète le VRAI potentiel viral. Sois SÉVÈRE : ne mets un
 score élevé que si le moment est réellement fort. Un contenu plat = score bas.
 
-Le `hook` est un TITRE d'accroche court (max ~70 caractères) dans la LANGUE de
-la vidéo, qui crée de la CURIOSITÉ (question, cliffhanger, promesse) sans
-spoiler la chute. Pas de ponctuation finale superflue.
+Le `hook` est un TITRE d'accroche court (3 à 8 mots) dans la LANGUE de la vidéo,
+qui crée de la CURIOSITÉ (question, cliffhanger, promesse) sans spoiler la chute.
+⚠️ Tu es le CLIPPEUR, PAS le créateur : écris à la 3e personne / en neutre.
+INTERDIT "je", "j'", "moi", "mon", "ma", "on" (anglais "I", "my", "me", "we") —
+parle du streamer à la 3e personne ("il/elle", le pseudo). Pas de ponctuation finale.
 
 Réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, au format :
 [
@@ -221,7 +223,16 @@ Voici un clip déjà populaire (titre d'origine : "{title}"). Sa transcription :
 {transcript}
 
 Génère un TITRE d'accroche (hook) à afficher EN GROS sur le clip, + des hashtags.
-Le hook doit :
+
+⚠️ RÈGLE ABSOLUE : tu es le CLIPPEUR qui commente la scène de l'EXTÉRIEUR, PAS le
+créateur. Écris le hook à la 3e personne ou en formulation neutre de spectateur.
+INTERDIT d'utiliser "je", "j'", "moi", "mon", "ma", "mes", "on" (et en anglais
+"I", "I'm", "my", "me", "we"). Parle du streamer à la 3e personne ("il/elle",
+"ce streamer", le pseudo) ou fais une phrase sans sujet personnel.
+Exemple : le clip dit "je quitte NoPixel" -> hook "Il quitte NoPixel pour de bon"
+(JAMAIS "Je quitte NoPixel").
+
+Le hook doit aussi :
 - être en {lang_name} ({lang_instr})
 - faire 3 à 8 mots MAX (il s'affiche en gros à l'écran, il doit tenir)
 - créer un MANQUE / de la curiosité (ce qu'on appelle un "curiosity gap") :
@@ -230,11 +241,42 @@ Le hook doit :
 - pas de guillemets, pas de ponctuation finale, pas d'emoji dans le hook
 
 Exemples de bons hooks : "Il mise TOUT sur un dernier coup", "La pire idée de sa vie",
-"Personne ne s'attendait à ça", "3 secondes qui changent tout".
+"Personne ne s'attendait à ça", "Il quitte tout du jour au lendemain".
 
 `hashtags` : 3 à 5, pertinents et populaires (dont 1-2 génériques type #tiktok #viral
 ou #fyp adaptés à la langue).
 Réponds UNIQUEMENT en JSON : {{"hook": "...", "hashtags": ["#..", "#.."]}}"""
+
+
+#: Pronoms 1re personne à bannir des hooks (le clippeur n'est pas le créateur).
+_FIRST_PERSON = {
+    "fr": re.compile(r"\b(je|j'|moi|mon|ma|mes|on|nous|notre|nos)\b", re.IGNORECASE),
+    "en": re.compile(r"\b(i|i'm|im|my|me|we|our|us)\b", re.IGNORECASE),
+}
+
+
+def _has_first_person(hook: str, lang: str | None) -> bool:
+    key = "fr" if (lang or "").lower().startswith("fr") else "en"
+    return bool(_FIRST_PERSON[key].search(hook or ""))
+
+
+def _to_third_person(hook: str, lang: str | None) -> str:
+    """Réécrit un hook fautif (1re personne) à la 3e personne. 1 appel Gemini."""
+    lang_name, _ = _lang_bits(lang)
+    prompt = (
+        f"Réécris ce titre de clip en {lang_name}, à la 3e personne / neutre, "
+        f"SANS aucun 'je/j'/moi/mon' ni 'I/my/me' (tu commentes de l'extérieur, "
+        f"tu n'es pas le créateur). Garde le même sens, 3 à 8 mots, pas de "
+        f"guillemets ni ponctuation finale. Réponds UNIQUEMENT le titre.\n\n"
+        f"Titre : {hook}"
+    )
+    try:
+        out = _call_gemini(prompt).strip().strip('"').strip()
+        out = re.sub(r"^```.*?\n|\n```$", "", out).strip()
+        return out.splitlines()[0][:150] if out else hook
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Viral: réécriture 3e personne échouée (%s) — hook conservé.", exc)
+        return hook
 
 
 def _lang_bits(lang: str | None) -> tuple[str, str]:
@@ -264,6 +306,9 @@ def generate_caption(
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()
         data = json.loads(raw)
         hook = str(data.get("hook") or fallback_title).strip()[:150]
+        if hook and _has_first_person(hook, lang):
+            log.info("Viral: hook à la 1re personne détecté — réécriture 3e personne.")
+            hook = _to_third_person(hook, lang)
         tags = data.get("hashtags") or []
         if isinstance(tags, str):
             tags = tags.split()
@@ -274,7 +319,9 @@ def generate_caption(
         return (fallback_title, [])
 
 
-def detect_moments(transcript: Transcript, video_duration_s: float) -> list[ViralMoment]:
+def detect_moments(
+    transcript: Transcript, video_duration_s: float, lang: str | None = None
+) -> list[ViralMoment]:
     """Retourne les meilleurs moments viraux du transcript (liste possiblement vide)."""
     if not transcript.segments:
         log.warning("Viral: transcript vide, aucun moment.")
@@ -292,6 +339,9 @@ def detect_moments(transcript: Transcript, video_duration_s: float) -> list[Vira
     log.info("Viral: appel Gemini (%s) sur %d segments…", settings.GEMINI_MODEL, len(transcript.segments))
     raw = _call_gemini(prompt)
     moments = _sanitize(_extract_json_array(raw), video_duration_s or transcript.duration)
+    for m in moments:  # garde-fou : jamais de hook à la 1re personne
+        if m.hook and _has_first_person(m.hook, lang):
+            m.hook = _to_third_person(m.hook, lang)
     log.info("Viral: %d moments retenus", len(moments))
     for m in moments:
         log.info("  [%.1f-%.1f] score=%.0f | %s", m.start, m.end, m.score, m.hook)
