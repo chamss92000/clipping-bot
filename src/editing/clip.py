@@ -1,21 +1,33 @@
-"""Bloc 5 — Découpe + recadrage vertical 9:16 avec suivi de visage.
+"""Bloc 5 — Découpe + mise au format vertical 9:16.
 
-Pipeline d'un clip :
-  1. Extraction précise du segment [start, end] (FFmpeg, ré-encodage → pas de
-     décalage de keyframe).
-  2. Échantillonnage de la position du visage à FACE_SAMPLE_HZ (OpenCV +
-     détecteur), puis lissage de la trajectoire horizontale du cadre.
-  3. Recadrage 9:16 **animé** via FFmpeg `sendcmd` sur le filtre `crop`
-     (le cadre suit le visage) → scale 1080x1920. Aucune boucle d'encodage
-     frame-par-frame en Python : FFmpeg fait tout le travail lourd.
-  4. Fallback : crop centré statique si aucun visage détecté.
+Le rendu vertical est LE point qui fait qu'un clip est regardable ou non. On
+choisit automatiquement, par clip, la meilleure mise en forme (recherche 2025
+sur le clipping gaming/IRL vers TikTok/Shorts) :
 
-Détecteur de visage à dégradation progressive :
-  MediaPipe (si dispo) → cascade Haar OpenCV → crop centré.
+  * ``split``  — une **facecam** (petite webcam dans un coin) est détectée :
+                 on empile **facecam en haut** + **gameplay en bas**. C'est le
+                 format qui marche le mieux pour du gaming : le spectateur voit
+                 la réaction ET l'action en même temps.
+  * ``face``   — un **gros visage plein cadre** (IRL / just chatting) : crop 9:16
+                 **statique** centré sur le visage. Aucun panning => aucun
+                 tremblement (c'était le défaut de l'ancien suivi de visage).
+  * ``blur``   — **pas de visage fiable** (gameplay pur / cinématique) : image
+                 entière centrée sur un fond flou (aucune tête coupée).
+
+La décision se prend en échantillonnant les visages sur tout le clip puis en
+regardant la taille MÉDIANE du visage :
+    hauteur_visage / hauteur_source  >= FACE_BIG_RATIO   -> ``face``
+                                     >= FACE_CAM_MIN_RATIO -> ``split``
+                                     sinon (ou trop peu de frames)  -> ``blur``
+
+Détecteur : MediaPipe (si dispo) -> cascade Haar OpenCV -> aucun (=> blur).
+Tout le travail lourd est fait par FFmpeg (crop/scale/stack), jamais frame par
+frame en Python.
 """
 
 from __future__ import annotations
 
+import statistics
 import subprocess
 import tempfile
 from pathlib import Path
@@ -33,10 +45,10 @@ class ClipError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# Détection de visage (abstraction avec fallback)
+# Détection de visage (renvoie la BOÎTE du plus grand visage, pas juste x)
 # ---------------------------------------------------------------------------
 class _FaceDetector:
-    """Retourne le centre X (px) du plus grand visage d'une frame BGR, ou None."""
+    """Retourne la boîte (x, y, w, h) en px du plus grand visage, ou None."""
 
     def __init__(self) -> None:
         self.backend = "none"
@@ -68,7 +80,7 @@ class _FaceDetector:
         self.backend = "haar"
         return True
 
-    def center_x(self, frame_bgr) -> float | None:
+    def box(self, frame_bgr) -> tuple[float, float, float, float] | None:
         h, w = frame_bgr.shape[:2]
         if self.backend == "mediapipe":
             rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -80,15 +92,17 @@ class _FaceDetector:
                 key=lambda d: d.location_data.relative_bounding_box.width
                 * d.location_data.relative_bounding_box.height,
             )
-            box = best.location_data.relative_bounding_box
-            return (box.xmin + box.width / 2) * w
+            b = best.location_data.relative_bounding_box
+            return (b.xmin * w, b.ymin * h, b.width * w, b.height * h)
         if self.backend == "haar":
             gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-            faces = self._haar.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            faces = self._haar.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=6, minSize=(40, 40)
+            )
             if len(faces) == 0:
                 return None
             x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-            return x + fw / 2
+            return (float(x), float(y), float(fw), float(fh))
         return None
 
     def close(self) -> None:
@@ -97,7 +111,7 @@ class _FaceDetector:
 
 
 # ---------------------------------------------------------------------------
-# Segmentation + échantillonnage
+# Segmentation + échantillonnage des visages
 # ---------------------------------------------------------------------------
 def _extract_segment(source: Path, start: float, end: float, out: Path) -> Path:
     dur = max(0.1, end - start)
@@ -112,8 +126,11 @@ def _extract_segment(source: Path, start: float, end: float, out: Path) -> Path:
     return out
 
 
-def _sample_face_track(video: Path) -> tuple[list[tuple[float, float | None]], int, int]:
-    """Échantillonne le centre X du visage à FACE_SAMPLE_HZ. Retourne (samples, w, h)."""
+def _sample_faces(video: Path):
+    """Échantillonne la boîte du visage à FACE_SAMPLE_HZ.
+
+    Retourne (boxes, src_w, src_h) où boxes est une liste de (x, y, w, h) | None.
+    """
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
         raise ClipError(f"OpenCV ne peut pas ouvrir {video}")
@@ -125,7 +142,7 @@ def _sample_face_track(video: Path) -> tuple[list[tuple[float, float | None]], i
 
     detector = _FaceDetector()
     interval = 1.0 / max(0.5, settings.FACE_SAMPLE_HZ)
-    samples: list[tuple[float, float | None]] = []
+    boxes: list[tuple[float, float, float, float] | None] = []
     t = 0.0
     try:
         while duration == 0 or t <= duration:
@@ -133,83 +150,47 @@ def _sample_face_track(video: Path) -> tuple[list[tuple[float, float | None]], i
             ok, frame = cap.read()
             if not ok:
                 break
-            samples.append((t, detector.center_x(frame)))
+            boxes.append(detector.box(frame))
             t += interval
     finally:
         detector.close()
         cap.release()
-    return samples, w, h
+    return boxes, w, h
 
 
-def _smooth_track(
-    samples: list[tuple[float, float | None]], src_w: int, crop_w: int, window: int = 5
-) -> list[tuple[float, int]] | None:
-    """Comble les trous, lisse (moyenne glissante), clampe x dans [0, src_w-crop_w].
-
-    Retourne None si aucun visage détecté (=> caller fait un crop centré statique).
-    """
-    xs = [x for _, x in samples]
-    if all(x is None for x in xs):
+def _median_box(boxes) -> tuple[float, float, float, float] | None:
+    """Boîte médiane (robuste aux faux positifs) des détections non nulles."""
+    valid = [b for b in boxes if b is not None]
+    if not valid:
         return None
-
-    max_x = src_w - crop_w
-    center = max_x / 2
-
-    # 1) Rejet des détections aberrantes (Haar sort parfois un faux visage très
-    #    loin) : on ignore un point qui saute de plus de 35% de la largeur d'un
-    #    échantillon au suivant — on garde la dernière valeur fiable.
-    face_centers: list[float] = []
-    last_valid: float | None = None
-    jump_limit = src_w * 0.35
-    for x in xs:
-        if x is None:
-            face_centers.append(last_valid if last_valid is not None else src_w / 2)
-        elif last_valid is not None and abs(x - last_valid) > jump_limit:
-            face_centers.append(last_valid)  # saut trop grand => ignoré
-        else:
-            face_centers.append(x)
-            last_valid = x
-
-    # 2) Cadre centré sur le visage, borné.
-    targets = [min(max(fx - crop_w / 2, 0.0), max_x) for fx in face_centers]
-
-    # 3) Lissage FORT : moyenne exponentielle (pan lent) + limitation de vitesse
-    #    (max de déplacement par échantillon) => plus de saccades.
-    alpha = 0.18                          # plus petit = plus lisse
-    max_step = max(2.0, src_w * 0.012)    # px max entre 2 échantillons (~4 Hz)
-    smoothed: list[float] = []
-    s = targets[0]
-    for tgt in targets:
-        s = alpha * tgt + (1 - alpha) * s
-        if smoothed:
-            delta = s - smoothed[-1]
-            if delta > max_step:
-                s = smoothed[-1] + max_step
-            elif delta < -max_step:
-                s = smoothed[-1] - max_step
-        smoothed.append(s)
-
-    # 4) clamp + arrondi pair (yuv420 exige des dimensions/positions paires)
-    out: list[tuple[float, int]] = []
-    for (t, _), x in zip(samples, smoothed):
-        cx = int(max(0, min(x, max_x)))
-        cx -= cx % 2
-        out.append((t, cx))
-    return out
+    xs = statistics.median(b[0] for b in valid)
+    ys = statistics.median(b[1] for b in valid)
+    ws = statistics.median(b[2] for b in valid)
+    hs = statistics.median(b[3] for b in valid)
+    return (xs, ys, ws, hs)
 
 
-def _write_sendcmd(track: list[tuple[float, int]], path: Path) -> None:
-    lines = [f"{t:.3f} crop x {x};" for t, x in track]
-    path.write_text("\n".join(lines), encoding="utf-8")
+# ---------------------------------------------------------------------------
+# FFmpeg helpers
+# ---------------------------------------------------------------------------
+def _run_ffmpeg(cmd: list[str], label: str, cwd: str | Path | None = None) -> None:
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd) if cwd else None)
+    if proc.returncode != 0:
+        tail = (proc.stderr or "")[-800:]
+        raise ClipError(f"FFmpeg ({label}) a échoué : {tail}")
+
+
+def _even(v: float) -> int:
+    i = int(round(v))
+    return i - (i % 2)
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(v, hi))
 
 
 def _blur_fit_graph() -> str:
-    """Filtergraph "image entière + fond flou" (rendu propre sur gameplay/cinéma).
-
-    L'image source est mise à l'échelle pour tenir entièrement dans le 9:16, et
-    le fond est la même image agrandie/rognée puis floutée et légèrement
-    assombrie (contraste avec les sous-titres).
-    """
+    """Image entière tenant dans le 9:16, posée sur un fond = elle-même floutée."""
     w, h = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
     return (
         "[0:v]split=2[bg][fg];"
@@ -220,108 +201,139 @@ def _blur_fit_graph() -> str:
     )
 
 
-def _run_ffmpeg(cmd: list[str], label: str, cwd: str | Path | None = None) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd) if cwd else None)
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-800:]
-        raise ClipError(f"FFmpeg ({label}) a échoué : {tail}")
+def _split_graph(src_w: int, src_h: int, face) -> str:
+    """Filtergraph split-stack : facecam (haut) + gameplay (bas).
+
+    - haut  : région autour de la webcam (boîte visage agrandie), ratio = slot haut.
+    - bas   : tranche centrale du gameplay, ratio = slot bas.
+    Chaque région est croppée AU BON RATIO puis scalée exactement au slot
+    (aucune déformation, aucune bande noire).
+    """
+    ow, oh = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
+    top_h = _even(oh * settings.SPLIT_TOP_FRAC)
+    bot_h = oh - top_h
+    fx, fy, fw, fh = face
+    fcx, fcy = fx + fw / 2, fy + fh / 2
+
+    # --- Facecam (haut) : boîte visage agrandie, au ratio du slot haut ---
+    top_ar = ow / top_h
+    cam_w = _clamp(fw * settings.CAM_ZOOM, 80, src_w)
+    cam_h = cam_w / top_ar
+    if cam_h > src_h:
+        cam_h = src_h
+        cam_w = cam_h * top_ar
+    cam_x = _clamp(fcx - cam_w / 2, 0, src_w - cam_w)
+    cam_y = _clamp(fcy - cam_h / 2, 0, src_h - cam_h)
+    cam_w, cam_h = _even(cam_w), _even(cam_h)
+    cam_x, cam_y = _even(cam_x), _even(cam_y)
+
+    # --- Gameplay (bas) : plus grande tranche centrée au ratio du slot bas ---
+    bot_ar = ow / bot_h
+    if src_w / src_h > bot_ar:  # source plus large que le slot : on rogne en largeur
+        game_h = _even(src_h)
+        game_w = _even(src_h * bot_ar)
+    else:
+        game_w = _even(src_w)
+        game_h = _even(src_w / bot_ar)
+    game_x = _even(_clamp((src_w - game_w) / 2, 0, src_w - game_w))
+    game_y = _even(_clamp((src_h - game_h) / 2, 0, src_h - game_h))
+
+    return (
+        f"[0:v]crop={cam_w}:{cam_h}:{cam_x}:{cam_y},"
+        f"scale={ow}:{top_h},setsar=1[top];"
+        f"[0:v]crop={game_w}:{game_h}:{game_x}:{game_y},"
+        f"scale={ow}:{bot_h},setsar=1[bot];"
+        f"[top][bot]vstack,setsar=1[v]"
+    )
 
 
 # ---------------------------------------------------------------------------
 # API publique
 # ---------------------------------------------------------------------------
+def _decide_mode(boxes, src_w: int, src_h: int) -> tuple[str, tuple | None]:
+    """Choisit le mode de cadrage et renvoie (mode, boîte médiane|None)."""
+    forced = settings.FRAMING
+    med = _median_box(boxes)
+    rate = (sum(1 for b in boxes if b is not None) / len(boxes)) if boxes else 0.0
+
+    if forced in ("split", "face", "blur"):
+        if forced in ("split", "face") and med is None:
+            log.info("Clip: cadrage %s forcé mais aucun visage -> fond flou.", forced)
+            return "blur", None
+        return forced, med
+
+    # --- auto ---
+    if med is None or rate < settings.FACE_MIN_RATE:
+        log.info("Clip: cadrage=blur (visage sur %.0f%% des frames < seuil)", rate * 100)
+        return "blur", None
+
+    fh_ratio = med[3] / src_h
+    if fh_ratio >= settings.FACE_BIG_RATIO:
+        mode = "face"
+    elif fh_ratio >= settings.FACE_CAM_MIN_RATIO:
+        mode = "split"
+    else:
+        mode = "blur"
+    log.info(
+        "Clip: cadrage=%s (visage %.0f%% des frames, hauteur=%.1f%% du cadre)",
+        mode, rate * 100, fh_ratio * 100,
+    )
+    return mode, med
+
+
 def make_vertical_clip(
     source_path: str | Path,
     start: float,
     end: float,
     out_path: str | Path,
 ) -> Path:
-    """Découpe [start,end], recadre en 9:16 avec suivi de visage, écrit out_path."""
+    """Découpe [start,end] et met au format 9:16 (mode choisi automatiquement)."""
     source_path = Path(source_path).resolve()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Absolu : FFmpeg tourne avec cwd=dossier temp pour le recadrage animé.
     out_path = out_path.resolve()
+    ow, oh = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
 
     with tempfile.TemporaryDirectory() as td:
         seg = _extract_segment(source_path, start, end, Path(td) / "seg.mp4")
+        boxes, w, h = _sample_faces(seg)
+        mode, med = _decide_mode(boxes, w, h)
 
-        samples, w, h = _sample_face_track(seg)
-
-        # --- Choix du cadrage -------------------------------------------------
-        # Un gros plan "suivi de visage" n'a de sens que s'il y a vraiment un
-        # visage. Sur du gameplay/cinématique, il montre surtout du décor vide :
-        # dans ce cas l'image entière sur fond flou rend bien mieux.
-        detected = sum(1 for _, x in samples if x is not None)
-        rate = detected / len(samples) if samples else 0.0
-        mode = settings.FRAMING
-        if mode == "auto":
-            mode = "face" if rate >= settings.FACE_MIN_RATE else "blur"
-        log.info("Clip: cadrage=%s (visage détecté sur %.0f%% du clip)", mode, rate * 100)
-
-        if mode == "blur":
-            cmd = [
-                settings.FFMPEG_BIN, "-y", "-i", str(seg),
-                "-filter_complex", _blur_fit_graph(),
-                "-map", "[v]", "-map", "0:a?",
-                "-r", str(settings.OUTPUT_FPS),
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-                "-c:a", "aac", "-b:a", "128k",
-                str(out_path),
-            ]
-            _run_ffmpeg(cmd, "cadrage fond flou", cwd=td)
-            log.info(
-                "Clip: écrit %s (%dx%d)", out_path.name,
-                settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT,
-            )
-            return out_path
-
-        # Plus grand rectangle 9:16 tenant dans la source.
-        target_ar = settings.OUTPUT_WIDTH / settings.OUTPUT_HEIGHT  # 9/16
-        if w / h > target_ar:  # source paysage (cas YouTube/Twitch) : on rogne en largeur
-            crop_h = h - (h % 2)
-            crop_w = int(round(h * target_ar))
-            crop_w -= crop_w % 2
-            track = _smooth_track(samples, w, crop_w)
-            crop_y = 0
-        else:  # source déjà verticale/carrée : crop centré vertical, pas de tracking X
-            crop_w = w - (w % 2)
-            crop_h = int(round(w / target_ar))
-            crop_h = min(crop_h, h)
-            crop_h -= crop_h % 2
-            track = None
-            crop_y = (h - crop_h) // 2
-
-        scale = f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}"
-
-        if track:  # recadrage animé (suivi de visage)
-            # Fichier de commandes en RELATIF (ffmpeg tourne avec cwd=td) : évite
-            # le ':' du chemin Windows qui casserait le parsing du filtergraph.
-            _write_sendcmd(track, Path(td) / "cmds.txt")
-            x0 = track[0][1]
-            vf = (
-                f"sendcmd=f=cmds.txt,"
-                f"crop=w={crop_w}:h={crop_h}:x={x0}:y={crop_y},"
-                f"{scale},setsar=1"
-            )
-            log.info("Clip: recadrage animé (%d échantillons, visage suivi)", len(track))
-        else:  # crop centré statique
-            x_center = (w - crop_w) // 2
-            x_center -= x_center % 2
-            vf = f"crop=w={crop_w}:h={crop_h}:x={x_center}:y={crop_y},{scale},setsar=1"
-            log.info("Clip: crop centré statique (pas de visage suivi)")
-
-        cmd = [
-            settings.FFMPEG_BIN, "-y", "-i", str(seg),
-            "-vf", vf,
+        common_tail = [
+            "-map", "[v]", "-map", "0:a?",
             "-r", str(settings.OUTPUT_FPS),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-c:a", "aac", "-b:a", "128k",
             str(out_path),
         ]
-        _run_ffmpeg(cmd, "recadrage 9:16", cwd=td)
 
-    log.info("Clip: écrit %s (%dx%d)", out_path.name, settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT)
+        if mode == "split" and med is not None:
+            graph = _split_graph(w, h, med)
+            cmd = [settings.FFMPEG_BIN, "-y", "-i", str(seg), "-filter_complex", graph, *common_tail]
+            _run_ffmpeg(cmd, "split-stack facecam+gameplay", cwd=td)
+
+        elif mode == "face" and med is not None:
+            # Crop 9:16 STATIQUE centré sur le visage (aucun panning).
+            target_ar = ow / oh
+            crop_h = _even(h)
+            crop_w = _even(min(w, h * target_ar))
+            fcx = med[0] + med[2] / 2
+            crop_x = _even(_clamp(fcx - crop_w / 2, 0, w - crop_w))
+            graph = (
+                f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:0,"
+                f"scale={ow}:{oh},setsar=1[v]"
+            )
+            cmd = [settings.FFMPEG_BIN, "-y", "-i", str(seg), "-filter_complex", graph, *common_tail]
+            _run_ffmpeg(cmd, "crop statique visage", cwd=td)
+
+        else:  # blur
+            cmd = [
+                settings.FFMPEG_BIN, "-y", "-i", str(seg),
+                "-filter_complex", _blur_fit_graph(), *common_tail,
+            ]
+            _run_ffmpeg(cmd, "cadrage fond flou", cwd=td)
+
+    log.info("Clip: écrit %s (%dx%d, mode=%s)", out_path.name, ow, oh, mode)
     return out_path
 
 

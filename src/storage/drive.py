@@ -29,7 +29,7 @@ from __future__ import annotations
 import io
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -197,7 +197,9 @@ class DriveStorage:
     def __init__(self, service, root_folder_id: str):
         self._svc = service
         self._root = root_folder_id
+        #: cache clé = f"{parent_id}/{name}" -> id (sous-dossiers + racines nommées)
         self._subdir_cache: dict[str, str] = {}
+        self._named_root_cache: dict[str, str] = {}
         self._state_file_id: str | None = None
 
     @classmethod
@@ -256,30 +258,64 @@ class DriveStorage:
         files = resp.get("files", [])
         return files[0]["id"] if files else None
 
-    def ensure_subdir(self, name: str) -> str:
+    def ensure_subdir(self, name: str, parent: str | None = None) -> str:
+        parent = parent or self._root
         if not name:
-            return self._root
-        if name in self._subdir_cache:
-            return self._subdir_cache[name]
-        existing = self._find_child(name, self._root, _FOLDER_MIME)
+            return parent
+        key = f"{parent}/{name}"
+        if key in self._subdir_cache:
+            return self._subdir_cache[key]
+        existing = self._find_child(name, parent, _FOLDER_MIME)
         if existing:
-            self._subdir_cache[name] = existing
+            self._subdir_cache[key] = existing
             return existing
-        meta = {"name": name, "mimeType": _FOLDER_MIME, "parents": [self._root]}
+        meta = {"name": name, "mimeType": _FOLDER_MIME, "parents": [parent]}
         created = self._execute(
             self._svc.files().create(body=meta, fields="id", supportsAllDrives=True)
         )
         fid = created["id"]
-        self._subdir_cache[name] = fid
+        self._subdir_cache[key] = fid
         log.info("Drive: sous-dossier '%s' créé (%s)", name, fid)
         return fid
 
+    def named_root(self, folder_name: str) -> str:
+        """Get-or-create un dossier racine (sous 'My Drive') par son NOM.
+
+        Sert à router les clips vers plusieurs dossiers => plusieurs chaînes
+        (ex. un dossier 'clipping-bot' international + 'clipping-bot-fr').
+        """
+        if folder_name in self._named_root_cache:
+            return self._named_root_cache[folder_name]
+        q = (
+            f"name = '{folder_name}' and mimeType = '{_FOLDER_MIME}' "
+            f"and 'root' in parents and trashed = false"
+        )
+        resp = self._execute(
+            self._svc.files().list(q=q, fields="files(id)", pageSize=1, supportsAllDrives=True)
+        )
+        files = resp.get("files", [])
+        if files:
+            fid = files[0]["id"]
+        else:
+            created = self._execute(
+                self._svc.files().create(
+                    body={"name": folder_name, "mimeType": _FOLDER_MIME, "parents": ["root"]},
+                    fields="id", supportsAllDrives=True,
+                )
+            )
+            fid = created["id"]
+            log.info("Drive: dossier racine '%s' créé (%s)", folder_name, fid)
+        self._named_root_cache[folder_name] = fid
+        return fid
+
     # --- upload / download ---
-    def upload(self, local_path: str | Path, remote_name: str, subdir: str = "") -> str:
+    def upload(
+        self, local_path: str | Path, remote_name: str, subdir: str = "", root: str | None = None
+    ) -> str:
         local_path = Path(local_path)
         if not local_path.exists():
             raise DriveError(f"Fichier local introuvable : {local_path}")
-        parent = self.ensure_subdir(subdir)
+        parent = self.ensure_subdir(subdir, parent=root)
         media = MediaFileUpload(str(local_path), resumable=True)
         existing = self._find_child(remote_name, parent)
         if existing:
@@ -311,6 +347,70 @@ class DriveStorage:
         buf.close()
         log.info("Drive: fichier %s téléchargé -> %s", file_id, local_path)
         return local_path
+
+    # --- listing / nettoyage ---
+    def _list_children(self, parent_id: str) -> list[dict]:
+        """Tous les fichiers (non dossiers) d'un dossier, avec leur date de création."""
+        out: list[dict] = []
+        page_token: str | None = None
+        while True:
+            resp = self._execute(
+                self._svc.files().list(
+                    q=f"'{parent_id}' in parents and trashed = false and mimeType != '{_FOLDER_MIME}'",
+                    fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
+                    pageSize=1000, pageToken=page_token,
+                    supportsAllDrives=True, includeItemsFromAllDrives=True,
+                )
+            )
+            out.extend(resp.get("files", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    def cleanup_old(
+        self, subdir: str, max_age_hours: int, root: str | None = None, hard_delete: bool = True
+    ) -> int:
+        """Supprime les fichiers de `subdir` plus vieux que `max_age_hours`.
+
+        Strictement limité au sous-dossier des clips (contenu généré par le bot),
+        pour garder de la place. `hard_delete=True` récupère l'espace immédiatement
+        (sinon corbeille, réversible mais l'espace n'est libéré qu'au vidage).
+        Retourne le nombre de fichiers supprimés.
+        """
+        if max_age_hours <= 0:
+            return 0
+        parent = self._find_child(subdir, root or self._root, _FOLDER_MIME)
+        if not parent:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        deleted = 0
+        for f in self._list_children(parent):
+            stamp = f.get("createdTime") or f.get("modifiedTime")
+            if not stamp:
+                continue
+            try:
+                when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if when >= cutoff:
+                continue
+            try:
+                if hard_delete:
+                    self._execute(self._svc.files().delete(fileId=f["id"], supportsAllDrives=True))
+                else:
+                    self._execute(
+                        self._svc.files().update(
+                            fileId=f["id"], body={"trashed": True}, supportsAllDrives=True
+                        )
+                    )
+                deleted += 1
+                log.info("Drive: purge (>%dh) '%s'", max_age_hours, f.get("name"))
+            except Exception as exc:  # noqa: BLE001 - une purge ratée ne casse pas le cycle
+                log.warning("Drive: purge de '%s' échouée : %s", f.get("name"), exc)
+        if deleted:
+            log.info("Drive: %d clip(s) purgé(s) dans '%s'", deleted, subdir)
+        return deleted
 
     # --- state.json ---
     def _state_id(self) -> str | None:

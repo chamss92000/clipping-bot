@@ -78,9 +78,13 @@ jobs:
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           TIKTOK_PRIVACY_LEVEL: ${{ vars.TIKTOK_PRIVACY_LEVEL || 'SELF_ONLY' }}
-          # --- Bloc 7bis (YouTube Shorts auto) ---
+          # --- Bloc 7bis (YouTube Shorts auto — DÉSACTIVÉ : dépôt Drive uniquement) ---
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_UPLOAD_ENABLE: ${{ vars.YOUTUBE_UPLOAD_ENABLE || 'true' }}
+          YOUTUBE_UPLOAD_ENABLE: ${{ vars.YOUTUBE_UPLOAD_ENABLE || 'false' }}
+          # --- Marchés / dossiers Drive (fr => nouvelle chaîne, intl => chaîne existante) ---
+          MARKETS: ${{ vars.MARKETS || 'fr,intl' }}
+          # purge auto des clips plus vieux que N heures (garde de la place)
+          DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
           # --- Tuning qualité (modifiable dans Settings > Variables, sans code) ---
           # ex. TWITCH_LANGUAGES=fr pour ne cibler que des sources francophones
           TWITCH_LANGUAGES: ${{ vars.TWITCH_LANGUAGES || 'fr,en' }}

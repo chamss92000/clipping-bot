@@ -215,24 +215,50 @@ def _sanitize(raw_moments: list, duration: float) -> list[ViralMoment]:
     return moments[: settings.GEMINI_MAX_CLIPS]
 
 
-_CAPTION_PROMPT = """Tu es expert en clips viraux TikTok/Shorts. Voici un clip
-déjà populaire (titre d'origine : "{title}"). Sa transcription :
+_CAPTION_PROMPT = """Tu es un TOP clippeur (des millions de vues sur TikTok/Shorts).
+Voici un clip déjà populaire (titre d'origine : "{title}"). Sa transcription :
 
 {transcript}
 
-Génère une accroche (hook) courte et une liste de hashtags pour maximiser les vues.
-- `hook` : max ~70 caractères, dans la LANGUE du clip, crée la curiosité, PAS de spoiler.
-- `hashtags` : 3 à 5, pertinents.
+Génère un TITRE d'accroche (hook) à afficher EN GROS sur le clip, + des hashtags.
+Le hook doit :
+- être en {lang_name} ({lang_instr})
+- faire 3 à 8 mots MAX (il s'affiche en gros à l'écran, il doit tenir)
+- créer un MANQUE / de la curiosité (ce qu'on appelle un "curiosity gap") :
+  question, cliffhanger, chiffre choc, promesse, réaction ("il n'aurait jamais dû…")
+- NE PAS spoiler la chute, NE PAS être une description plate du contenu
+- pas de guillemets, pas de ponctuation finale, pas d'emoji dans le hook
+
+Exemples de bons hooks : "Il mise TOUT sur un dernier coup", "La pire idée de sa vie",
+"Personne ne s'attendait à ça", "3 secondes qui changent tout".
+
+`hashtags` : 3 à 5, pertinents et populaires (dont 1-2 génériques type #tiktok #viral
+ou #fyp adaptés à la langue).
 Réponds UNIQUEMENT en JSON : {{"hook": "...", "hashtags": ["#..", "#.."]}}"""
 
 
-def generate_caption(transcript: Transcript, fallback_title: str = "") -> tuple[str, list[str]]:
+def _lang_bits(lang: str | None) -> tuple[str, str]:
+    if (lang or "").lower().startswith("fr"):
+        return ("français", "impérativement en français")
+    if (lang or "").lower().startswith(("en", "intl")):
+        return ("anglais", "in English, punchy")
+    return ("la langue du clip", "dans la langue parlée dans le clip")
+
+
+def generate_caption(
+    transcript: Transcript, fallback_title: str = "", lang: str | None = None
+) -> tuple[str, list[str]]:
     """Génère (hook, hashtags) pour un clip déjà viral. 1 appel Gemini, avec
-    repli sur le titre d'origine en cas d'échec."""
+    repli sur le titre d'origine en cas d'échec. `lang` force la langue du hook
+    ("fr"/"en"/"intl") pour coller au marché ciblé."""
     text = transcript.full_text[:2000] if transcript.segments else ""
     if not text and not fallback_title:
         return ("", [])
-    prompt = _CAPTION_PROMPT.format(title=fallback_title[:150], transcript=text or "(pas de dialogue)")
+    lang_name, lang_instr = _lang_bits(lang)
+    prompt = _CAPTION_PROMPT.format(
+        title=fallback_title[:150], transcript=text or "(pas de dialogue)",
+        lang_name=lang_name, lang_instr=lang_instr,
+    )
     try:
         raw = _call_gemini(prompt).strip()
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()

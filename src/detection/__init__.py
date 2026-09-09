@@ -38,6 +38,25 @@ _SOURCES = {
 }
 
 
+def market_of(c: VideoCandidate) -> str:
+    """Classe une source dans un marché : "fr" (francophone) ou "intl".
+
+    Sert à router le clip vers le bon dossier Drive (=> la bonne chaîne).
+    Basé sur la langue quand elle est connue (Twitch clips, YouTube), sinon sur
+    un défaut par plateforme (Kick : liste de chaînes FR connues).
+    """
+    lang = (c.extra.get("language") or "").lower()
+    if lang:
+        return "fr" if lang.startswith("fr") else "intl"
+    if c.platform == Platform.YOUTUBE:
+        return "fr" if settings.YOUTUBE_REGION.upper() == "FR" else "intl"
+    if c.platform == Platform.KICK:
+        who = (c.extra.get("slug") or c.creator or "").lower()
+        fr_set = {s.lower() for s in settings.KICK_FR_CHANNELS}
+        return "fr" if who in fr_set else "intl"
+    return "intl"
+
+
 def _is_low_quality(c: VideoCandidate) -> str | None:
     """Retourne la raison du rejet si la source est du contenu 'recyclé', sinon None.
 
@@ -112,4 +131,4 @@ def detect_all(
     return ranked
 
 
-__all__ = ["detect_all", "youtube", "twitch", "kick"]
+__all__ = ["detect_all", "market_of", "youtube", "twitch", "kick"]

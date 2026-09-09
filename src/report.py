@@ -52,26 +52,40 @@ def build_report(
     lines.append("")
 
     # --- Clips produits (le plus important en premier) ---
+    # Groupés par marché : chaque marché = un dossier Drive = une chaîne.
+    _folder = {
+        "fr": settings.DRIVE_ROOT_FOLDER_NAME_FR,
+        "intl": settings.DRIVE_ROOT_FOLDER_NAME,
+    }
     lines.append(f"## Clips produits ({len(clips)})")
     lines.append("")
+    lines.append("_Copie/colle le hook + les hashtags ci-dessous en légende quand tu postes._")
+    lines.append("")
     if clips:
-        for c in clips:
-            yt = c.get("youtube")
-            yt_txt = {
-                "posted": "✅ publié sur YouTube Shorts",
-                "failed": "❌ échec YouTube",
-                "dry_run": "🧪 simulé (dry-run)",
-                None: "— (pas d'upload YouTube)",
-            }.get(yt, str(yt))
-            lines.append(f"- **{c.get('hook','(sans titre)')}**")
-            lines.append(f"  - fichier : `{c.get('clip')}`")
-            lines.append(f"  - hashtags : {' '.join(c.get('hashtags') or []) or '—'}")
-            lines.append(f"  - YouTube : {yt_txt}")
+        for mk in ("fr", "intl"):
+            mk_clips = [c for c in clips if (c.get("market") or "intl") == mk]
+            if not mk_clips:
+                continue
+            label = "🇫🇷 Français" if mk == "fr" else "🌍 International"
+            lines.append(f"### {label} — dossier Drive `{_folder.get(mk, mk)}/clips`")
+            lines.append("")
+            for c in mk_clips:
+                tags = " ".join(c.get("hashtags") or [])
+                lines.append(f"- **{c.get('hook','(sans titre)')}**")
+                lines.append(f"  - fichier : `{c.get('clip')}`")
+                lines.append(f"  - légende : {c.get('hook','')} {tags}".rstrip())
+                yt = c.get("youtube")
+                if yt:
+                    yt_txt = {
+                        "posted": "✅ publié sur YouTube Shorts",
+                        "failed": "❌ échec YouTube",
+                        "dry_run": "🧪 simulé (dry-run)",
+                    }.get(yt, str(yt))
+                    lines.append(f"  - YouTube : {yt_txt}")
+            lines.append("")
     else:
         lines.append("_Aucun clip produit lors de ce cycle._")
-    lines.append("")
-    lines.append(f"Quota YouTube restant aujourd'hui : **{youtube_left}**")
-    lines.append("")
+        lines.append("")
 
     # --- Source(s) retenue(s) ---
     lines.append("## Source(s) traitée(s)")

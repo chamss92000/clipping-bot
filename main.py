@@ -20,13 +20,23 @@ Usage :
 from __future__ import annotations
 
 import json
+import re
 import sys
+import unicodedata
 
 from config import settings
-from src.detection import detect_all
+from src.detection import detect_all, market_of
 from src.utils.logging import attach_file_handler, get_logger
 
 log = get_logger("main")
+
+
+def _slugify(text: str, max_len: int = 48) -> str:
+    """Titre -> nom de fichier lisible et sûr (ascii, tirets)."""
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    text = re.sub(r"[^\w\s-]", "", text).strip().lower()
+    text = re.sub(r"[\s_-]+", "-", text)
+    return text[:max_len].strip("-") or "clip"
 
 
 def _dump_candidates(candidates) -> None:
@@ -38,11 +48,16 @@ def _dump_candidates(candidates) -> None:
     log.info("Candidats écrits dans %s", out)
 
 
-def _process_source(cand, storage, state, budget: int | None = None) -> int:
+def _process_source(
+    cand, storage, state, budget: int | None = None,
+    market: str = "intl", clip_root: str | None = None,
+) -> int:
     """Traite une source de bout en bout. Retourne le nb de clips produits.
 
     `budget` = nombre max de clips à produire pour cette source (reste du
     quota du cycle). None => settings.MAX_CLIPS_PER_RUN.
+    `market` = "fr" | "intl" (langue du hook) ; `clip_root` = dossier Drive
+    racine où déposer les clips de ce marché (None => dossier principal).
     """
     if budget is None:
         budget = settings.MAX_CLIPS_PER_RUN
@@ -83,7 +98,7 @@ def _process_source(cand, storage, state, budget: int | None = None) -> int:
             # Le clip EST le moment viral : on prend toute sa durée, et on
             # génère juste une accroche (Gemini) à partir du titre + transcript.
             end = min(dl.duration_s, settings.CLIP_MAX_DURATION_S)
-            hook, hashtags = generate_caption(transcript, cand.title)
+            hook, hashtags = generate_caption(transcript, cand.title, lang=market)
             moments = [ViralMoment(start=0.0, end=end, score=cand.score, hook=hook, hashtags=hashtags)]
         else:
             if not transcript.segments:
@@ -111,9 +126,12 @@ def _process_source(cand, storage, state, budget: int | None = None) -> int:
             # Référentiels : moments en temps VOD ; le fichier local démarre à `offset`.
             local_start = max(0.0, m.start - offset)
             local_end = m.end - offset
+            # id interne (ascii, stable) pour les fichiers intermédiaires
             base = f"{cand.platform.value}_{cand.source_id}_{int(m.start)}"
             raw_clip = settings.CLIPS_DIR / f"{base}.mp4"
-            final_clip = settings.CLIPS_DIR / f"{base}_sub.mp4"
+            # nom FINAL lisible : slug du hook + court id source (point 4)
+            pretty = f"{_slugify(m.hook or cand.title)}_{cand.source_id[:6]}"
+            final_clip = settings.CLIPS_DIR / f"{pretty}.mp4"
 
             try:
                 make_vertical_clip(dl.path, local_start, local_end, raw_clip)
@@ -132,18 +150,19 @@ def _process_source(cand, storage, state, budget: int | None = None) -> int:
             caption = build_caption(m.hook, m.hashtags)
 
             if settings.PUBLISH_MODE == "manual":
-                # Mode semi-auto : on dépose le clip + un fichier caption prêt à
-                # copier sur Drive ; l'utilisateur publie à la main.
-                cap_file = settings.CLIPS_DIR / f"{base}.txt"
-                cap_file.write_text(caption, encoding="utf-8")
+                # Mode semi-auto : on dépose UNIQUEMENT le clip (.mp4) dans le
+                # dossier Drive du marché (=> chaîne fr / chaîne intl). Le hook et
+                # les hashtags sont regroupés dans le rapport (pas de .txt épars).
                 try:
-                    storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS)
-                    storage.upload(cap_file, cap_file.name, subdir=settings.DRIVE_SUBDIR_CLIPS)
+                    storage.upload(
+                        final_clip, final_clip.name,
+                        subdir=settings.DRIVE_SUBDIR_CLIPS, root=clip_root,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("  Upload Drive échoué : %s", exc)
-                log.info("  ✅ Clip prêt à publier (manuel TikTok) : %s", final_clip.name)
+                log.info("  ✅ Clip [%s] prêt : %s", market, final_clip.name)
 
-                # Publication auto YouTube Shorts (en plus du manuel TikTok).
+                # Publication auto YouTube Shorts (désactivée par défaut).
                 yt_status = None
                 if settings.YOUTUBE_UPLOAD_ENABLE and state.youtube_left() > 0:
                     try:
@@ -164,8 +183,10 @@ def _process_source(cand, storage, state, budget: int | None = None) -> int:
                     {
                         "uid": cand.uid,
                         "clip": final_clip.name,
+                        "market": market,
                         "hook": m.hook,
                         "hashtags": m.hashtags,
+                        "caption": caption,
                         "status": "ready_manual",
                         "youtube": yt_status,
                     }
@@ -225,6 +246,16 @@ def run(detect_only: bool = False) -> int:
         log.error("Storage Drive indisponible (%s) — cycle interrompu.", exc)
         return 1
 
+    # --- Dossiers Drive par marché (2 chaînes) ------------------------------
+    # intl => dossier principal existant ; fr => dossier dédié (créé au besoin).
+    market_roots: dict[str, str | None] = {"intl": None}
+    if "fr" in settings.MARKETS:
+        try:
+            market_roots["fr"] = storage.named_root(settings.DRIVE_ROOT_FOLDER_NAME_FR)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Dossier Drive fr indisponible (%s) — fr routé vers le principal.", exc)
+            market_roots["fr"] = None
+
     # --- Ordre de traitement : priorité aux sources RAPIDES/COMPLÈTES --------
     # Une vidéo téléchargeable en entier (courte, ex. YouTube) donne des clips
     # plus cohérents et un run plus rapide/moins cher qu'un VOD de 48h échantillonné.
@@ -258,14 +289,22 @@ def run(detect_only: bool = False) -> int:
             log.debug("  %s ignoré (plateforme bloquée ce cycle).", cand.uid)
             continue
 
-        log.info("→ Traitement %s (%s)", cand.uid, cand.title[:60])
+        market = market_of(cand)
+        if market not in settings.MARKETS:
+            log.debug("  %s ignoré (marché '%s' désactivé).", cand.uid, market)
+            continue
+        clip_root = market_roots.get(market)
+
+        log.info("→ Traitement %s [%s] (%s)", cand.uid, market, cand.title[:60])
         chosen.append(cand)
         attempts += 1
         produced = 0
         platform_blocked = False
         budget = settings.MAX_CLIPS_PER_RUN - clips_total
         try:
-            produced = _process_source(cand, storage, state, budget=budget)
+            produced = _process_source(
+                cand, storage, state, budget=budget, market=market, clip_root=clip_root
+            )
         except Exception as exc:  # noqa: BLE001 - isole la panne d'une source
             from src.downloader.download import BotCheckError, is_bot_check
 
@@ -300,6 +339,26 @@ def run(detect_only: bool = False) -> int:
                 log.info("  %s : 0 clip (échec %d/%d) — on passe au suivant.",
                          cand.uid, n, settings.MAX_SOURCE_FAILURES)
         storage.save_state(state)  # sauvegarde incrémentale (résilience)
+
+    # --- Nettoyage : purge des clips > N heures (garde de la place) ---------
+    if settings.DRIVE_CLEANUP_MAX_AGE_H > 0:
+        seen_roots: set = set()
+        for mk in ("intl", "fr"):
+            if mk not in settings.MARKETS:
+                continue
+            root = market_roots.get(mk)
+            if root in seen_roots:
+                continue
+            seen_roots.add(root)
+            try:
+                storage.cleanup_old(
+                    settings.DRIVE_SUBDIR_CLIPS,
+                    settings.DRIVE_CLEANUP_MAX_AGE_H,
+                    root=root,
+                    hard_delete=settings.DRIVE_CLEANUP_HARD_DELETE,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Nettoyage Drive (%s) échoué : %s", mk, exc)
 
     # --- Rapport de run sur Drive (pour vérifier les sources d'un coup d'œil) --
     try:

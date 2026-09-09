@@ -145,6 +145,18 @@ GOOGLE_DRIVE_CREDENTIALS_FILE: str | None = _get("GOOGLE_DRIVE_CREDENTIALS_FILE"
 # DRIVE_ROOT_FOLDER_NAME est créé/retrouvé à la racine de ton Drive.
 GOOGLE_DRIVE_FOLDER_ID: str | None = _get("GOOGLE_DRIVE_FOLDER_ID")
 DRIVE_ROOT_FOLDER_NAME: str = _get("DRIVE_ROOT_FOLDER_NAME", "clipping-bot")
+#: Deux "marchés" => deux dossiers Drive => deux chaînes.
+#:  * intl : clips anglophones/internationaux -> dossier racine ci-dessus.
+#:  * fr   : clips francophones -> dossier dédié (créé automatiquement).
+DRIVE_ROOT_FOLDER_NAME_FR: str = _get("DRIVE_ROOT_FOLDER_NAME_FR", "clipping-bot-fr")
+#: Marchés activés. Retire "fr" ou "intl" pour n'en produire qu'un.
+MARKETS: list[str] = _get_list("MARKETS", ["fr", "intl"])
+
+# --- Nettoyage automatique du dossier clips (pour garder de la place) ---
+#: On purge les clips plus vieux que N heures à chaque cycle (0 = désactivé).
+DRIVE_CLEANUP_MAX_AGE_H: int = _get_int("DRIVE_CLEANUP_MAX_AGE_H", 48)
+#: True = suppression définitive (récupère la place tout de suite). False = corbeille.
+DRIVE_CLEANUP_HARD_DELETE: bool = _get_bool("DRIVE_CLEANUP_HARD_DELETE", True)
 
 UPLOADPOST_API_KEY: str | None = _get("UPLOADPOST_API_KEY")
 UPLOADPOST_USER: str | None = _get("UPLOADPOST_USER")
@@ -184,6 +196,10 @@ TWITCH_MIN_VOD_DURATION_S: int = _get_int("TWITCH_MIN_VOD_DURATION_S", 300)
 #: Slugs de chaînes Kick à surveiller en priorité (fallback si l'endpoint
 #: "featured/livestreams" est bloqué).
 KICK_CHANNELS: list[str] = _get_list("KICK_CHANNELS", ["xqc", "trainwreckstv", "adin"])
+#: Chaînes Kick francophones (leurs clips partent dans le marché "fr").
+KICK_FR_CHANNELS: list[str] = _get_list(
+    "KICK_FR_CHANNELS", ["kamet0", "amine", "billy", "adphigh"]
+)
 KICK_MIN_VIEWERS: int = _get_int("KICK_MIN_VIEWERS", 2000)
 KICK_VODS_PER_CHANNEL: int = _get_int("KICK_VODS_PER_CHANNEL", 2)
 KICK_FEATURED_LIMIT: int = _get_int("KICK_FEATURED_LIMIT", 20)
@@ -293,11 +309,28 @@ OUTPUT_FPS: int = _get_int("OUTPUT_FPS", 30)
 #: fréquence (Hz) puis on interpole, pour éviter les tremblements de cadre.
 FACE_SAMPLE_HZ: float = _get_float("FACE_SAMPLE_HZ", 4.0)
 FACE_DETECTION_CONFIDENCE: float = _get_float("FACE_DETECTION_CONFIDENCE", 0.5)
-#: Cadrage vertical : "auto" (gros plan si visage présent, sinon fond flou),
-#: "face" (toujours suivi de visage), "blur" (toujours image entière + fond flou).
+#: Cadrage vertical. "auto" choisit tout seul le meilleur rendu par clip :
+#:   * split  : facecam (webcam) détectée dans un coin -> pile facecam en haut +
+#:              gameplay en bas (le rendu roi sur TikTok/Shorts pour du gaming).
+#:   * face   : gros visage plein cadre (IRL/just chatting) -> crop 9:16 STATIQUE
+#:              centré sur le visage (aucun panning : plus de tremblements).
+#:   * blur   : pas de visage fiable (gameplay/cinématique) -> image entière + fond flou.
+#: Valeurs forçables : "split" | "face" | "blur" (sinon "auto").
 FRAMING: str = _get("FRAMING", "auto")
-#: En "auto", on passe en fond flou si un visage est détecté sur moins de X% du clip.
-FACE_MIN_RATE: float = _get_float("FACE_MIN_RATE", 0.4)
+#: En "auto", proportion mini de frames où un visage doit être vu pour ne pas
+#: tomber en fond flou.
+FACE_MIN_RATE: float = _get_float("FACE_MIN_RATE", 0.35)
+#: Hauteur du visage / hauteur source AU-DESSUS de laquelle on considère un
+#: "gros visage plein cadre" (talking head) -> crop statique visage.
+FACE_BIG_RATIO: float = _get_float("FACE_BIG_RATIO", 0.16)
+#: En dessous de FACE_BIG_RATIO mais au-dessus de ce seuil = petite facecam
+#: dans un coin -> split-stack. En dessous = détection peu fiable -> fond flou.
+FACE_CAM_MIN_RATIO: float = _get_float("FACE_CAM_MIN_RATIO", 0.035)
+#: Split-stack : fraction de la hauteur verticale allouée à la facecam (haut).
+SPLIT_TOP_FRAC: float = _get_float("SPLIT_TOP_FRAC", 0.42)
+#: Facteur d'agrandissement de la boîte visage pour cadrer la facecam (montre
+#: le visage + un peu de contexte de la webcam, pas juste le nez).
+CAM_ZOOM: float = _get_float("CAM_ZOOM", 3.2)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
 #: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
@@ -345,7 +378,9 @@ PUBLISH_MODE: str = _get("PUBLISH_MODE", "manual")
 # --- Publication auto YouTube Shorts (gratuit, public, sans audit) ---
 # Active l'upload automatique de chaque clip en Short public sur TA chaîne.
 # En plus de la livraison manuelle TikTok (clip + caption sur Drive).
-YOUTUBE_UPLOAD_ENABLE: bool = _get_bool("YOUTUBE_UPLOAD_ENABLE", True)
+# DÉSACTIVÉ par défaut : la pipeline se contente de déposer les clips sur Drive
+# (tu publies toi-même sur tes chaînes). Repasse à true pour ré-activer l'auto-upload.
+YOUTUBE_UPLOAD_ENABLE: bool = _get_bool("YOUTUBE_UPLOAD_ENABLE", False)
 # OAuth : réutilise le client GOOGLE_OAUTH_CLIENT_ID/SECRET + un refresh token
 # dédié au scope youtube.upload (obtenu via `authorize_youtube`).
 YOUTUBE_REFRESH_TOKEN: str | None = _get("YOUTUBE_REFRESH_TOKEN")

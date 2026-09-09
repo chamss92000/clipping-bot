@@ -186,6 +186,10 @@ def _channel_clips(sess: requests.Session, slug: str, count: int) -> list[dict]:
 def detect_clips(channels: list[str] | None = None) -> list[VideoCandidate]:
     """Clips Kick DÉJÀ viraux (triés par vues). Best-effort, [] si bloqué."""
     channels = list(channels or settings.KICK_CHANNELS)
+    # On inclut les chaînes FR connues pour alimenter le marché francophone.
+    for slug in settings.KICK_FR_CHANNELS:
+        if slug not in channels:
+            channels.append(slug)
     sess = _session()
     discovered = _discover_featured(sess, settings.KICK_FEATURED_LIMIT)
     for slug in discovered:
