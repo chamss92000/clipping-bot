@@ -34,7 +34,16 @@ jobs:
           cache: pip
 
       - name: Install ffmpeg + polices sous-titres
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-liberation
+        run: |
+          # Les dépôts TIERS pré-installés sur le runner (Chrome, Microsoft) cassent
+          # parfois `apt-get update` (Hash Sum mismatch) et font échouer l'étape
+          # alors qu'on n'a besoin que des paquets Ubuntu. On retire uniquement ces
+          # .list tiers (jamais les dépôts Ubuntu en .sources) et on rend update
+          # non bloquant : les index Ubuntu se rafraîchissent, l'install passe.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/microsoft-prod.list || true
+          sudo apt-get update || true
+          sudo apt-get install -y ffmpeg fonts-liberation
 
       - name: Install dependencies
         run: |
