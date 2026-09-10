@@ -177,8 +177,8 @@ FACELESS_VOICE_RATE: str = _get("FACELESS_VOICE_RATE", "+8%")  # débit un peu p
 FACELESS_WORDS: int = _get_int("FACELESS_WORDS", 150)
 #: Visuels : nb de prompts d'images IA demandés au script + plafond d'images
 #: générées par vidéo (chaque image IA = ~6-10s de génération Pollinations).
-FACELESS_SCENES: int = _get_int("FACELESS_SCENES", 6)
-FACELESS_MAX_IMAGES: int = _get_int("FACELESS_MAX_IMAGES", 6)
+FACELESS_SCENES: int = _get_int("FACELESS_SCENES", 5)
+FACELESS_MAX_IMAGES: int = _get_int("FACELESS_MAX_IMAGES", 4)
 #: B-roll libre de droits via Pexels (clé gratuite), en repli si l'IA échoue.
 PEXELS_API_KEY: str | None = _get("PEXELS_API_KEY")
 
