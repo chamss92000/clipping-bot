@@ -39,10 +39,15 @@ narration of about {words} words). Rules:
 - No emojis, no hashtags inside the narration, no markdown.
 - End with a soft CTA to follow for more.
 
+Also give {n_scenes} SHORT visual prompts ("scenes") for an AI image generator,
+one per beat of the script, that ILLUSTRATE what is being said (concrete,
+cinematic, no text in image). Each scene = a vivid image description.
+
 Return ONLY valid JSON, no text around:
 {{"hook":"<3 to 6 word on-screen title, uppercase-friendly>",
   "narration":"<the full spoken script, one flowing text>",
   "hashtags":["#tag1","#tag2","#tag3","#tag4"],
+  "scenes":["<image prompt 1>","<image prompt 2>", "..."],
   "bg_keywords":"<2-3 words to search stock b-roll, e.g. 'laptop desk work'>"}}"""
 
 
@@ -52,7 +57,8 @@ def generate_script(topic: str | None = None, words: int | None = None) -> dict:
 
     topic = topic or settings.FACELESS_TOPIC
     words = words or settings.FACELESS_WORDS
-    raw = _call_gemini(_SCRIPT_PROMPT.format(topic=topic, words=words)).strip()
+    n_scenes = settings.FACELESS_SCENES
+    raw = _call_gemini(_SCRIPT_PROMPT.format(topic=topic, words=words, n_scenes=n_scenes)).strip()
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()
     data = json.loads(raw)
     narration = str(data.get("narration", "")).strip()
@@ -62,10 +68,15 @@ def generate_script(topic: str | None = None, words: int | None = None) -> dict:
     if isinstance(hashtags, str):
         hashtags = hashtags.split()
     hashtags = [h if h.startswith("#") else f"#{h}" for h in hashtags][:8]
+    scenes = data.get("scenes") or []
+    if isinstance(scenes, str):
+        scenes = [scenes]
+    scenes = [str(s).strip() for s in scenes if str(s).strip()]
     return {
         "hook": str(data.get("hook", "")).strip()[:80] or topic[:40],
         "narration": narration,
         "hashtags": hashtags,
+        "scenes": scenes,
         "bg_keywords": str(data.get("bg_keywords", "") or "technology background").strip(),
     }
 
@@ -99,6 +110,112 @@ def _duration(path: Path) -> float:
         return float(out)
     except ValueError:
         return 0.0
+
+
+def _pollinations(prompt: str, seed: int, out: Path) -> Path:
+    """Génère une image via Pollinations.ai (gratuit, sans clé)."""
+    import urllib.parse
+
+    import requests
+
+    import time
+
+    style = ", cinematic, dramatic lighting, high detail, 9:16 vertical, no text"
+    p = urllib.parse.quote((prompt + style)[:350])
+    url = (f"https://image.pollinations.ai/prompt/{p}"
+           f"?width={settings.OUTPUT_WIDTH}&height={settings.OUTPUT_HEIGHT}"
+           f"&nologo=true&seed={seed}&model=flux")
+    last = "?"
+    for attempt in range(3):  # le tier gratuit renvoie souvent 429 => backoff
+        try:
+            r = requests.get(url, timeout=75)
+            if r.status_code == 429:
+                last = "429"
+                time.sleep(6 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            if "image" not in r.headers.get("Content-Type", ""):
+                raise FacelessError("réponse non-image")
+            out.write_bytes(r.content)
+            return out
+        except Exception as exc:  # noqa: BLE001
+            last = str(exc)[:120]
+            time.sleep(3)
+    raise FacelessError(f"Pollinations KO après retries : {last}")
+
+
+def _ai_slideshow_bg(duration: float, scenes: list[str], out: Path, td: Path) -> Path | None:
+    """Diaporama d'images IA (Pollinations) avec zoom lent (Ken Burns). None si KO."""
+    n = max(3, min(settings.FACELESS_MAX_IMAGES, round(duration / 6)))
+    prompts = list(scenes) if scenes else []
+    if not prompts:
+        return None
+    while len(prompts) < n:               # complète en réutilisant les scènes
+        prompts.append(prompts[len(prompts) % len(scenes)])
+    prompts = prompts[:n]
+    seg = duration / n
+    segframes = max(1, int(round(seg * 30)))
+
+    # 1) Génère les images IA SÉQUENTIELLEMENT (le tier gratuit limite le
+    #    parallélisme => 429). Pacing léger entre les appels.
+    import time
+
+    results: dict[int, Path | None] = {}
+    for i, pr in enumerate(prompts):
+        img = td / f"img_{i}.jpg"
+        try:
+            _pollinations(pr, 1000 + i * 7, img)
+            results[i] = img
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Image IA %d KO (%s)", i, exc)
+            results[i] = None
+        time.sleep(1.5)
+    if not any(results.values()):
+        return None  # aucune image => on laisse le fallback (Pexels/dégradé)
+
+    # 2) Construit les segments (zoom Ken Burns) séquentiellement.
+    seg_files: list[Path] = []
+    last_ok: Path | None = None
+    for i, pr in enumerate(prompts):
+        img = results.get(i) or last_ok
+        if img is None:
+            continue  # pas encore d'image valide, on saute
+        last_ok = img
+        clip = td / f"seg_{i}.mp4"
+        # léger zoom (avant/arrière alterné) pour donner de la vie
+        zexpr = "min(zoom+0.0009,1.22)" if i % 2 == 0 else "if(lte(zoom,1.0),1.22,max(zoom-0.0009,1.0))"
+        vf = (
+            f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},"
+            f"zoompan=z='{zexpr}':d={segframes}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":s={settings.OUTPUT_WIDTH}x{settings.OUTPUT_HEIGHT}:fps=30,setsar=1"
+        )
+        proc = subprocess.run(
+            [settings.FFMPEG_BIN, "-y", "-loglevel", "error", "-loop", "1", "-t", f"{seg:.2f}",
+             "-i", str(img), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+             "-pix_fmt", "yuv420p", "-r", "30", str(clip)],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            log.warning("Segment %d KO : %s", i, (proc.stderr or "")[-200:])
+            if not seg_files:
+                return None
+            continue
+        seg_files.append(clip)
+
+    if not seg_files:
+        return None
+    listf = td / "concat.txt"
+    listf.write_text("".join(f"file '{c.as_posix()}'\n" for c in seg_files), encoding="utf-8")
+    proc = subprocess.run(
+        [settings.FFMPEG_BIN, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+         "-i", str(listf), "-c", "copy", str(out)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    log.info("Faceless: diaporama IA (%d images)", len(seg_files))
+    return out
 
 
 def _gradient_bg(duration: float, out: Path) -> Path:
@@ -184,7 +301,12 @@ def make_faceless_video(out_path: str | Path, script: dict | None = None) -> dic
         if dur < 2:
             raise FacelessError("Voix off trop courte")
 
-        bg = _pexels_bg(dur, script["bg_keywords"], tdp / "bg.mp4") or _gradient_bg(dur, tdp / "bg.mp4")
+        # Visuel : images IA (Pollinations, gratuit) > b-roll Pexels > dégradé.
+        bg = (
+            _ai_slideshow_bg(dur, script.get("scenes") or [], tdp / "bg.mp4", tdp)
+            or _pexels_bg(dur, script["bg_keywords"], tdp / "bg.mp4")
+            or _gradient_bg(dur, tdp / "bg.mp4")
+        )
 
         # vidéo (bg) + audio (voix)
         raw = tdp / "raw.mp4"
