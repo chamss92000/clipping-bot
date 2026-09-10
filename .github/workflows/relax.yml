@@ -1,0 +1,69 @@
+name: relax-content
+
+# Génère les vidéos "cute / relax" (chaîne d'origine). Cron séparé du clipping.
+on:
+  schedule:
+    - cron: "30 7,19 * * *"     # 07:30 et 19:30 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Générer sans uploader"
+        type: boolean
+        default: false
+
+concurrency:
+  group: relax-content
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/microsoft-prod.list || true
+          sudo apt-get update || true
+          sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run relax generator
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          # notif e-mail (mêmes secrets que le clipping)
+          NOTIFY_EMAIL_ENABLE: ${{ vars.NOTIFY_EMAIL_ENABLE || 'true' }}
+          NOTIFY_EMAIL_TO: ${{ vars.NOTIFY_EMAIL_TO || 'ce.boutajar@gmail.com' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          # réglages
+          RELAX_PER_RUN: ${{ vars.RELAX_PER_RUN || '2' }}
+          DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
+          LOG_LEVEL: INFO
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python relax_main.py
+
+      - name: Upload debug (si échec)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relax-debug
+          path: relax.log
+          if-no-files-found: ignore
+          retention-days: 5

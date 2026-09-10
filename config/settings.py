@@ -157,6 +157,13 @@ DRIVE_ROOT_FOLDER_NAME_FR: str = _get("DRIVE_ROOT_FOLDER_NAME_FR", "clipping-bot
 #: Marchés activés. Retire "fr" ou "intl" pour n'en produire qu'un.
 MARKETS: list[str] = _get_list("MARKETS", ["fr", "intl"])
 
+# --- Contenu "cute / relax" généré (chaîne d'origine, hors clipping) ---
+#: Active la génération de vidéos relax (thumb-game). Dossier Drive dédié.
+RELAX_ENABLE: bool = _get_bool("RELAX_ENABLE", True)
+RELAX_DRIVE_FOLDER_NAME: str = _get("RELAX_DRIVE_FOLDER_NAME", "clipping-bot-relax")
+#: Nombre de vidéos relax générées par run.
+RELAX_PER_RUN: int = _get_int("RELAX_PER_RUN", 2)
+
 # --- Nettoyage automatique du dossier clips (pour garder de la place) ---
 #: On purge les clips plus vieux que N heures à chaque cycle (0 = désactivé).
 DRIVE_CLEANUP_MAX_AGE_H: int = _get_int("DRIVE_CLEANUP_MAX_AGE_H", 48)
