@@ -107,6 +107,10 @@ jobs:
           TWITCH_SOURCE: ${{ vars.TWITCH_SOURCE || 'clips' }}
           # ne garder que les clips au-dessus de N vues (ex. 500 = gros clips only)
           TWITCH_CLIP_MIN_VIEWS: ${{ vars.TWITCH_CLIP_MIN_VIEWS || '50' }}
+          # jeux/catégories exclus (sous-chaîne, séparés par des virgules). Vide = tout autoriser.
+          TWITCH_GAME_BLACKLIST: ${{ vars.TWITCH_GAME_BLACKLIST || 'grand theft auto' }}
+          # diversité : max de clips gardés par jeu
+          TWITCH_MAX_CLIPS_PER_GAME: ${{ vars.TWITCH_MAX_CLIPS_PER_GAME || '3' }}
           # fenêtre de fraîcheur des clips, en jours
           TWITCH_CLIPS_DAYS: ${{ vars.TWITCH_CLIPS_DAYS || '7' }}
           # objectif de clips PAR chaîne (fr + intl) — chaque marché a sa place réservée

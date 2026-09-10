@@ -217,7 +217,10 @@ def _split_graph(src_w: int, src_h: int, face) -> str:
 
     # --- Facecam (haut) : boîte visage agrandie, au ratio du slot haut ---
     top_ar = ow / top_h
-    cam_w = _clamp(fw * settings.CAM_ZOOM, 80, src_w)
+    # largeur = max(zoom autour du visage, plancher anti-cadrage-trop-serré)
+    cam_w = _clamp(
+        max(fw * settings.CAM_ZOOM, src_w * settings.CAM_MIN_WIDTH_FRAC), 80, src_w
+    )
     cam_h = cam_w / top_ar
     if cam_h > src_h:
         cam_h = src_h

@@ -121,6 +121,22 @@ def _top_streams(min_viewers: int, limit: int, languages: list[str]) -> list[dic
     return collected
 
 
+def _games_map(game_ids: list[str]) -> dict[str, str]:
+    """Résout {game_id: game_name} via Helix /games (batch de 100 max)."""
+    ids = [g for g in {gid for gid in game_ids if gid}]
+    out: dict[str, str] = {}
+    for i in range(0, len(ids), 100):
+        batch = ids[i : i + 100]
+        try:
+            data = _helix_get("games", {"id": batch})  # requests répète ?id=.. pour chaque
+        except Exception as exc:  # noqa: BLE001 - pas de nom => on ne filtre juste pas
+            log.debug("Twitch: résolution des jeux échouée : %s", exc)
+            continue
+        for g in data.get("data", []):
+            out[str(g.get("id"))] = g.get("name", "")
+    return out
+
+
 def _recent_clips(user_id: str, count: int, started_at: str) -> list[dict]:
     """Top clips (triés par vues) d'un streamer depuis `started_at` (RFC3339)."""
     data = _helix_get(
@@ -218,8 +234,32 @@ def detect_clips(
                 candidates[cand.uid] = cand
 
     result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
-    log.info("Twitch: %d clips viraux candidats", len(result))
-    return result
+
+    # --- Nom du jeu : filtre catégorie (ex. GTA RP) + diversité par jeu ---
+    games = _games_map([c.extra.get("game_id") for c in result])
+    blacklist = [b.lower() for b in settings.TWITCH_GAME_BLACKLIST]
+    per_game_cap = settings.TWITCH_MAX_CLIPS_PER_GAME
+    filtered: list[VideoCandidate] = []
+    per_game: dict[str, int] = {}
+    dropped_game = 0
+    for c in result:
+        name = games.get(str(c.extra.get("game_id")), "")
+        c.extra["game_name"] = name
+        low = name.lower()
+        if any(b in low for b in blacklist):
+            dropped_game += 1
+            continue
+        if per_game_cap and name:
+            if per_game.get(name, 0) >= per_game_cap:
+                continue
+            per_game[name] = per_game.get(name, 0) + 1
+        filtered.append(c)
+
+    if dropped_game:
+        log.info("Twitch: %d clip(s) écarté(s) par le filtre de jeu (%s)",
+                 dropped_game, ", ".join(settings.TWITCH_GAME_BLACKLIST))
+    log.info("Twitch: %d clips viraux candidats", len(filtered))
+    return filtered
 
 
 def _recent_vods(user_id: str, count: int) -> list[dict]:

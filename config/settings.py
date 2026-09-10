@@ -203,6 +203,12 @@ TWITCH_SOURCE: str = _get("TWITCH_SOURCE", "clips")
 TWITCH_CLIPS_DAYS: int = _get_int("TWITCH_CLIPS_DAYS", 7)
 TWITCH_CLIPS_PER_STREAMER: int = _get_int("TWITCH_CLIPS_PER_STREAMER", 8)
 TWITCH_CLIP_MIN_VIEWS: int = _get_int("TWITCH_CLIP_MIN_VIEWS", 50)
+#: Catégories/jeux Twitch à EXCLURE (sous-chaîne du nom du jeu, insensible à la
+#: casse). GTA RP sature les tops streamers => exclu par défaut pour diversifier.
+#: Vide cette variable (TWITCH_GAME_BLACKLIST="") pour réautoriser tous les jeux.
+TWITCH_GAME_BLACKLIST: list[str] = _get_list("TWITCH_GAME_BLACKLIST", ["grand theft auto"])
+#: Diversité : nombre max de clips gardés PAR JEU dans la file finale (0 = illimité).
+TWITCH_MAX_CLIPS_PER_GAME: int = _get_int("TWITCH_MAX_CLIPS_PER_GAME", 3)
 TWITCH_MIN_VIEWERS: int = _get_int("TWITCH_MIN_VIEWERS", 3000)
 TWITCH_TOP_STREAMS: int = _get_int("TWITCH_TOP_STREAMS", 20)
 #: Langues de streams retenues (Helix `language`).
@@ -348,8 +354,11 @@ FACE_CAM_MIN_RATIO: float = _get_float("FACE_CAM_MIN_RATIO", 0.035)
 #: Split-stack : fraction de la hauteur verticale allouée à la facecam (haut).
 SPLIT_TOP_FRAC: float = _get_float("SPLIT_TOP_FRAC", 0.42)
 #: Facteur d'agrandissement de la boîte visage pour cadrer la facecam (montre
-#: le visage + un peu de contexte de la webcam, pas juste le nez).
-CAM_ZOOM: float = _get_float("CAM_ZOOM", 3.2)
+#: le visage + le buste + le contexte de la webcam, pas juste la tête).
+CAM_ZOOM: float = _get_float("CAM_ZOOM", 4.2)
+#: Largeur mini de la zone facecam = fraction de la largeur source. Empêche un
+#: cadrage trop serré (donc trop "zoomé"/pixelisé) quand le visage est petit.
+CAM_MIN_WIDTH_FRAC: float = _get_float("CAM_MIN_WIDTH_FRAC", 0.45)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
 #: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
