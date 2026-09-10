@@ -170,6 +170,9 @@ FACELESS_DRIVE_FOLDER_NAME: str = _get("FACELESS_DRIVE_FOLDER_NAME", "clipping-b
 FACELESS_PER_RUN: int = _get_int("FACELESS_PER_RUN", 2)
 #: Sujet/niche de la chaîne (pilote la génération de script).
 FACELESS_TOPIC: str = _get("FACELESS_TOPIC", "AI tools & automation to make money and work smarter")
+#: Style visuel : "cinematic" (sombre/luxe/réussite, étalonnage contrasté +
+#: grain + vignette — l'esthétique motivation) ou "clean" (tech/moderne clair).
+FACELESS_STYLE: str = _get("FACELESS_STYLE", "cinematic")
 #: Voix edge-tts (gratuite). Ex. en-US-GuyNeural, en-US-AriaNeural, en-US-JennyNeural.
 FACELESS_VOICE: str = _get("FACELESS_VOICE", "en-US-GuyNeural")
 FACELESS_VOICE_RATE: str = _get("FACELESS_VOICE_RATE", "+8%")  # débit un peu plus punchy

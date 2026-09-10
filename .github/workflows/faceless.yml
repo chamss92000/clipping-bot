@@ -64,6 +64,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           # réglages
           FACELESS_TOPIC: ${{ vars.FACELESS_TOPIC || 'AI tools & automation to make money and work smarter' }}
+          FACELESS_STYLE: ${{ vars.FACELESS_STYLE || 'cinematic' }}
           FACELESS_VOICE: ${{ vars.FACELESS_VOICE || 'en-US-GuyNeural' }}
           FACELESS_WORDS: ${{ vars.FACELESS_WORDS || '150' }}
           FACELESS_PER_RUN: ${{ vars.FACELESS_PER_RUN || '2' }}

@@ -28,6 +28,14 @@ class FacelessError(RuntimeError):
     pass
 
 
+def _grade_suffix() -> str:
+    """Chaîne de filtres FFmpeg pour l'étalonnage cinématique (sombre/grain/vignette)."""
+    if settings.FACELESS_STYLE != "cinematic":
+        return ""
+    return (",eq=contrast=1.22:saturation=0.32:brightness=-0.04,"
+            "vignette=PI/4.5,noise=alls=7:allf=t")
+
+
 _SCRIPT_PROMPT = """You are a top faceless short-form scriptwriter for the niche:
 "{topic}".
 
@@ -40,8 +48,7 @@ narration of about {words} words). Rules:
 - End with a soft CTA to follow for more.
 
 Also give {n_scenes} SHORT visual prompts ("scenes") for an AI image generator,
-one per beat of the script, that ILLUSTRATE what is being said (concrete,
-cinematic, no text in image). Each scene = a vivid image description.
+one per beat. {style_hint} Each scene = a vivid image description, NO text in image.
 
 Return ONLY valid JSON, no text around:
 {{"hook":"<3 to 6 word on-screen title, uppercase-friendly>",
@@ -58,7 +65,16 @@ def generate_script(topic: str | None = None, words: int | None = None) -> dict:
     topic = topic or settings.FACELESS_TOPIC
     words = words or settings.FACELESS_WORDS
     n_scenes = settings.FACELESS_SCENES
-    raw = _call_gemini(_SCRIPT_PROMPT.format(topic=topic, words=words, n_scenes=n_scenes)).strip()
+    if settings.FACELESS_STYLE == "cinematic":
+        style_hint = ("Visual style: DARK CINEMATIC, aspirational luxury/success — "
+                      "e.g. black luxury car at night, city skyline from a penthouse, "
+                      "someone working late on a laptop in a dark room, private jet, "
+                      "watch/wealth close-ups. Moody, high contrast, night, filmic.")
+    else:
+        style_hint = "Visual style: clean, modern, bright tech/office scenes."
+    raw = _call_gemini(
+        _SCRIPT_PROMPT.format(topic=topic, words=words, n_scenes=n_scenes, style_hint=style_hint)
+    ).strip()
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()
     data = json.loads(raw)
     narration = str(data.get("narration", "")).strip()
@@ -120,7 +136,11 @@ def _pollinations(prompt: str, seed: int, out: Path) -> Path:
 
     import time
 
-    style = ", cinematic, dramatic lighting, high detail, 9:16 vertical, no text"
+    if settings.FACELESS_STYLE == "cinematic":
+        style = (", dark cinematic, moody, high contrast, luxury, night, film grain, "
+                 "desaturated, dramatic lighting, 9:16 vertical, no text")
+    else:
+        style = ", cinematic, dramatic lighting, high detail, 9:16 vertical, no text"
     p = urllib.parse.quote((prompt + style)[:350])
     url = (f"https://image.pollinations.ai/prompt/{p}"
            f"?width={settings.OUTPUT_WIDTH}&height={settings.OUTPUT_HEIGHT}"
@@ -188,7 +208,7 @@ def _ai_slideshow_bg(duration: float, scenes: list[str], out: Path, td: Path) ->
             f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},"
             f"zoompan=z='{zexpr}':d={segframes}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-            f":s={settings.OUTPUT_WIDTH}x{settings.OUTPUT_HEIGHT}:fps=30,setsar=1"
+            f":s={settings.OUTPUT_WIDTH}x{settings.OUTPUT_HEIGHT}:fps=30,setsar=1{_grade_suffix()}"
         )
         proc = subprocess.run(
             [settings.FFMPEG_BIN, "-y", "-loglevel", "error", "-loop", "1", "-t", f"{seg:.2f}",
@@ -267,7 +287,7 @@ def _pexels_bg(duration: float, keywords: str, out: Path, td: Path) -> Path | No
         links = links[:n]
         seg = duration / len(links)
         vf = (f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-              f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},eq=brightness=-0.06,setsar=1")
+              f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},eq=brightness=-0.06,setsar=1{_grade_suffix()}")
         seg_files: list[Path] = []
         for i, link in enumerate(links):
             raw = td / f"px_{i}.mp4"
