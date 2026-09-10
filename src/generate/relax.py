@@ -1,19 +1,16 @@
-"""Générateur de vidéos "cute / relax" (style thumb-game) — 100% code, 0€.
+"""Générateur de vidéos "thumb-game" (style doodle) — 100% code, 0€.
 
-Rendu d'une vidéo verticale 1080x1920 en boucle :
-  * fond pastel doux,
-  * un personnage mignon (poussin / chat) qui respire (idle bob),
-  * un tracé animé (boucle en pointillés) + un point guide qui tourne, que le
-    spectateur suit avec le doigt,
-  * un texte d'accroche bilingue (FR + EN) en haut.
+Inspiré des vidéos relax coréennes : un écran pastel avec un GROS POUCE dessiné
+(contour noir, style doodle) qui se balance, que le spectateur suit avec son
+propre pouce, + un texte manuscrit en anglais avec une petite ligne en coréen
+(police Gaegu, qui gère les deux). Quelques cœurs qui montent pour l'ambiance.
 
-Aucune musique embarquée (droits) : la vidéo est muette, l'utilisateur ajoute un
-son tendance directement dans TikTok au moment de poster (meilleur pour l'algo).
+Rendu : Pillow (dessin) + FFmpeg (encodage via pipe). Muet volontairement
+(l'utilisateur ajoute un son tendance TikTok au post). Déterministe (seed),
+bouclable (les périodes divisent la durée => boucle sans coupure).
 
-Technique : on dessine chaque frame avec Pillow en supersampling ×2 (bords
-lisses), on redimensionne, et on pousse les frames brutes dans FFmpeg via stdin
-(pas de milliers de PNG sur le disque). Tout est déterministe (seed) et bouclable
-(les animations ont une période qui divise la durée => boucle sans coupure).
+⚠️ FFmpeg : stderr redirigé vers un fichier (jamais un PIPE non drainé pendant
+l'écriture des frames => deadlock).
 """
 
 from __future__ import annotations
@@ -32,37 +29,25 @@ from src.utils.logging import get_logger
 log = get_logger("generate.relax")
 
 W, H = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
-#: On dessine à la résolution finale (rapide) et on lisse les bords avec un léger
-#: flou (moins coûteux que le supersampling ×2, qui était trop lent).
-SS = 1
-_SMOOTH = 0.8  # rayon du flou anti-aliasing (px)
-
-
-# --- Contenu (varié à chaque vidéo) ----------------------------------------
-# (fond, accent/texte, couleur du tracé)
-THEMES = [
-    ("#DCEEFB", "#2C6FB5", "#7FB2E5"),  # ciel
-    ("#F6D96B", "#7A5300", "#E0A030"),  # jaune chaud
-    ("#FCD9E5", "#B23A6E", "#F49CC0"),  # rose
-    ("#D9F2E6", "#1F7A5A", "#7FD1AE"),  # menthe
-    ("#E7E0FB", "#5B3FA8", "#B0A0E8"),  # lavande
-]
-
-# (personnage, couleur principale)
-CHARACTERS = ["chick", "cat"]
-
-# (texte FR, texte EN)
-PROMPTS = [
-    ("Suis le tracé avec ton doigt", "Follow the line with your finger"),
-    ("Pose ton pouce sur l'écran", "Place your thumb on the screen"),
-    ("Détends-toi et respire", "Relax and breathe"),
-    ("Reste concentré jusqu'au bout", "Stay focused till the end"),
-    ("Fais tourner ton doigt en rythme", "Move your finger to the beat"),
-    ("Garde le rythme, ne lâche pas", "Keep the rhythm, don't stop"),
-]
-
 FPS = 20
-DURATION_S = 10  # multiple des périodes d'anim => boucle parfaite
+DURATION_S = 10          # multiple des périodes d'anim => boucle parfaite
+_SMOOTH = 0.7            # léger flou anti-aliasing
+INK = (38, 38, 38)       # encre noire (contours + texte)
+
+_FONT = settings.FONTS_DIR / "Gaegu-Bold.ttf"
+
+# Fonds pastel façon doodle coréen (bleu, menthe, lavande, pêche, rose).
+THEMES = ["#BFD3F2", "#C7ECE4", "#DED3F5", "#FBE0C8", "#FBD5E0"]
+
+# (anglais = principal, coréen = petite touche)
+PROMPTS = [
+    ("MOVE YOUR FINGER WITH THE SCREEN", "화면을 따라 손가락을 움직이세요"),
+    ("FOLLOW MY THUMB", "엄지를 따라오세요"),
+    ("CAN YOU KEEP UP?", "따라올 수 있나요?"),
+    ("DON'T LOSE THE RHYTHM", "리듬을 놓치지 마세요"),
+    ("STAY WITH ME TILL THE END", "끝까지 함께해요"),
+    ("JUST RELAX AND FOLLOW", "편하게 따라 해보세요"),
+]
 
 
 def _hex(c: str) -> tuple[int, int, int]:
@@ -71,135 +56,106 @@ def _hex(c: str) -> tuple[int, int, int]:
 
 
 def _font(size_px: int) -> ImageFont.FreeTypeFont:
-    path = settings.FONTS_DIR / f"{settings.SUB_FONT}-Regular.ttf"
     try:
-        return ImageFont.truetype(str(path), size_px)
-    except Exception:  # noqa: BLE001 - repli police par défaut
+        return ImageFont.truetype(str(_FONT), size_px)
+    except Exception:  # noqa: BLE001
         return ImageFont.load_default()
 
 
-def _draw_chick(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int, main) -> None:
-    beak = _hex("#F2A03D")
-    black = (40, 40, 40)
-    blush = (255, 150, 160)
-    # pattes
-    d.line([(cx - r // 3, cy + r), (cx - r // 3, cy + int(r * 1.25))], fill=beak, width=max(2, r // 12))
-    d.line([(cx + r // 3, cy + r), (cx + r // 3, cy + int(r * 1.25))], fill=beak, width=max(2, r // 12))
-    # corps
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=main)
-    # ailes
-    d.ellipse([cx - r, cy - r // 3, cx - r // 3, cy + r // 2], fill=main)
-    d.ellipse([cx + r // 3, cy - r // 3, cx + r, cy + r // 2], fill=main)
-    # touffe
-    for dx in (-r // 6, 0, r // 6):
-        d.line([(cx + dx, cy - r), (cx + dx, cy - int(r * 1.3))], fill=main, width=max(2, r // 14))
-    # yeux
-    er = max(3, r // 9)
-    d.ellipse([cx - r // 3 - er, cy - er, cx - r // 3 + er, cy + er], fill=black)
-    d.ellipse([cx + r // 3 - er, cy - er, cx + r // 3 + er, cy + er], fill=black)
-    # bec
-    d.polygon([(cx - r // 8, cy + r // 5), (cx + r // 8, cy + r // 5), (cx, cy + r // 2)], fill=beak)
-    # joues
-    d.ellipse([cx - int(r * 0.7), cy + r // 8, cx - int(r * 0.4), cy + int(r * 0.4)], fill=blush)
-    d.ellipse([cx + int(r * 0.4), cy + r // 8, cx + int(r * 0.7), cy + int(r * 0.4)], fill=blush)
+def _fit_font(d: ImageDraw.ImageDraw, text: str, max_w: int, start_px: int, stroke: int):
+    """Réduit la taille jusqu'à ce que le texte tienne dans max_w (px)."""
+    size = start_px
+    while size > 12:
+        f = _font(size)
+        tb = d.textbbox((0, 0), text, font=f, stroke_width=stroke)
+        if tb[2] - tb[0] <= max_w:
+            return f
+        size -= 3
+    return _font(size)
 
 
-def _draw_cat(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int, main) -> None:
-    black = (35, 35, 35)
-    blush = (255, 140, 150)
-    gold = (245, 205, 90)
-    # oreilles
-    d.polygon([(cx - r, cy - r // 2), (cx - r // 2, cy - int(r * 1.3)), (cx - r // 6, cy - r // 2)], fill=main)
-    d.polygon([(cx + r // 6, cy - r // 2), (cx + r // 2, cy - int(r * 1.3)), (cx + r, cy - r // 2)], fill=main)
-    # corps
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=main)
-    # yeux (grands, avec reflet)
-    er = max(5, r // 4)
-    for sx in (-r // 2, r // 2):
-        d.ellipse([cx + sx - er, cy - er, cx + sx + er, cy + er], fill=gold)
-        pr = er // 2
-        d.ellipse([cx + sx - pr, cy - pr, cx + sx + pr, cy + pr], fill=black)
-        hr = max(1, er // 5)
-        d.ellipse([cx + sx - hr, cy - er // 2 - hr, cx + sx + hr, cy - er // 2 + hr], fill=(255, 255, 255))
-    # museau
-    d.polygon([(cx - r // 12, cy + r // 4), (cx + r // 12, cy + r // 4), (cx, cy + r // 3)], fill=(90, 70, 70))
-    # joues
-    d.ellipse([cx - int(r * 0.75), cy + r // 6, cx - int(r * 0.45), cy + int(r * 0.42)], fill=blush)
-    d.ellipse([cx + int(r * 0.45), cy + r // 6, cx + int(r * 0.75), cy + int(r * 0.42)], fill=blush)
+def _draw_thumb_layer(length: int, width: int) -> Image.Image:
+    """Dessine un pouce (blanc, contour noir) sur un calque, base au CENTRE du
+    calque (pour pouvoir le faire pivoter autour de la base)."""
+    lw, lh = length, length * 2
+    layer = Image.new("RGBA", (lw, lh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    cx, base_y = lw // 2, lh // 2  # base = centre du calque
+    top_y = base_y - length
+    out = max(6, int(width * 0.10))
+    skin = (255, 255, 255)
+
+    # doigt (capsule)
+    d.rounded_rectangle(
+        [cx - width // 2, top_y, cx + width // 2, base_y],
+        radius=width // 2, fill=skin, outline=INK, width=out,
+    )
+    # ongle
+    nw, nh = int(width * 0.62), int(width * 0.9)
+    ny = top_y + int(width * 0.35)
+    d.rounded_rectangle(
+        [cx - nw // 2, ny, cx + nw // 2, ny + nh],
+        radius=nw // 2, outline=INK, width=max(3, out // 2),
+    )
+    # pli de phalange
+    ky = base_y - int(length * 0.42)
+    d.arc([cx - width // 2, ky - width // 3, cx + width // 2, ky + width // 3],
+          200, 340, fill=INK, width=max(3, out // 2))
+    return layer
 
 
-def _draw_character(d, name, cx, cy, r, main):
-    (_draw_cat if name == "cat" else _draw_chick)(d, cx, cy, r, main)
+def _draw_heart(d: ImageDraw.ImageDraw, cx: int, cy: int, s: int, fill) -> None:
+    r = s // 2
+    d.ellipse([cx - s // 2, cy - r, cx, cy], fill=fill, outline=INK, width=max(2, s // 12))
+    d.ellipse([cx, cy - r, cx + s // 2, cy], fill=fill, outline=INK, width=max(2, s // 12))
+    d.polygon([(cx - s // 2, cy - r // 6), (cx + s // 2, cy - r // 6), (cx, cy + r)],
+              fill=fill)
+    d.line([(cx - s // 2, cy - r // 6), (cx, cy + r)], fill=INK, width=max(2, s // 12))
+    d.line([(cx + s // 2, cy - r // 6), (cx, cy + r)], fill=INK, width=max(2, s // 12))
 
 
-def _loop_point(px, py, rx, ry, frac):
-    a = 2 * math.pi * frac
-    return (px + rx * math.cos(a), py + ry * math.sin(a))
-
-
-def _draw_frame(t: float, cfg: dict) -> Image.Image:
-    bw, bh = W * SS, H * SS
-    img = Image.new("RGB", (bw, bh), _hex(cfg["bg"]))
+def _draw_frame(t: float, cfg: dict, thumb: Image.Image) -> Image.Image:
+    img = Image.new("RGB", (W, H), _hex(cfg["bg"]))
     d = ImageDraw.Draw(img)
-    accent = _hex(cfg["accent"])
-    path_c = _hex(cfg["path"])
 
-    # --- tracé en pointillés (boucle) + point guide ---
-    px, py = bw // 2, int(bh * 0.60)
-    rx, ry = int(bw * 0.30), int(bh * 0.16)
-    n = 72
-    phase = (t / DURATION_S) * n  # défile d'un tour de motif sur la durée => loop
-    for i in range(n):
-        if (i + int(phase)) % 2 == 0:
-            continue
-        x1, y1 = _loop_point(px, py, rx, ry, i / n)
-        x2, y2 = _loop_point(px, py, rx, ry, (i + 0.5) / n)
-        d.line([(x1, y1), (x2, y2)], fill=path_c, width=max(3, SS * 5))
-    gx, gy = _loop_point(px, py, rx, ry, (t / DURATION_S) % 1.0)  # 1 tour / durée => loop
-    gr = SS * 26
-    d.ellipse([gx - gr, gy - gr, gx + gr, gy + gr], fill=(255, 255, 255))
-    d.ellipse([gx - gr, gy - gr, gx + gr, gy + gr], outline=accent, width=SS * 5)
-    ir = gr // 2
-    d.ellipse([gx - ir, gy - ir, gx + ir, gy + ir], fill=accent)
+    # --- cœurs qui montent (ambiance, boucle) ---
+    for k in range(4):
+        frac = ((t / DURATION_S) + k / 4.0) % 1.0
+        hy = int(H * 0.9 - frac * H * 0.55)
+        hx = int(W * (0.2 + 0.15 * k) + math.sin(frac * 6.28 + k) * 20)
+        s = int(W * 0.05)
+        _draw_heart(d, hx, hy, s, _hex("#F1808F"))
 
-    # --- personnage (respire) ---
-    bob = math.sin(2 * math.pi * (t / 2.0)) * (SS * 10)  # période 2s (12/2=6 cycles) => loop
-    r = int(bw * 0.16)
-    _draw_character(d, cfg["character"], bw // 2, int(bh * 0.34 + bob), r, _hex(cfg["main"]))
+    # --- pouce qui se balance (le "jeu") ---
+    angle = math.sin(2 * math.pi * (t / 2.5)) * 14.0  # période 2.5s (10/2.5=4) => loop
+    rot = thumb.rotate(angle, resample=Image.BICUBIC, expand=False)
+    bx, by = int(W * 0.54), int(H * 1.04)  # base près du bas de l'écran
+    img.paste(rot, (bx - rot.width // 2, by - rot.height // 2), rot)
 
-    # --- textes ---
-    f1 = _font(int(bh * 0.045))
-    f2 = _font(int(bh * 0.032))
-    stroke = max(4, SS * 4)
-    for text, font, y in (
-        (cfg["fr"], f1, int(bh * 0.09)),
-        (cfg["en"], f2, int(bh * 0.145)),
-    ):
+    # --- textes (anglais principal + petite ligne coréenne), auto-ajustés ---
+    stroke = max(3, int(H * 0.004))
+    max_w = int(W * 0.90)
+    f_ko = _fit_font(d, cfg["ko"], max_w, int(H * 0.032), stroke)
+    f_en = _fit_font(d, cfg["en"], max_w, int(H * 0.058), stroke)
+    for text, font, y in ((cfg["ko"], f_ko, int(H * 0.06)), (cfg["en"], f_en, int(H * 0.10))):
         tb = d.textbbox((0, 0), text, font=font, stroke_width=stroke)
-        tw = tb[2] - tb[0]
-        d.text(((bw - tw) // 2, y), text, font=font, fill=accent,
+        d.text(((W - (tb[2] - tb[0])) // 2, y), text, font=font, fill=INK,
                stroke_width=stroke, stroke_fill=(255, 255, 255))
 
-    if SS != 1:
-        img = img.resize((W, H), Image.LANCZOS)
     if _SMOOTH:
         img = img.filter(ImageFilter.GaussianBlur(_SMOOTH))
     return img
 
 
 def make_relax_video(out_path: str | Path, seed: int | None = None) -> Path:
-    """Génère une vidéo relax déterministe (seed) dans out_path. Retourne le chemin."""
+    """Génère une vidéo thumb-game déterministe (seed). Retourne le chemin."""
     rng = random.Random(seed)
-    bg, accent, path_c = rng.choice(THEMES)
-    fr, en = rng.choice(PROMPTS)
-    cfg = {
-        "bg": bg, "accent": accent, "path": path_c,
-        "character": rng.choice(CHARACTERS),
-        "main": rng.choice(["#FFD84D", "#FFFFFF", "#8A8A8A", "#FF9F68", "#B0E0A8"]),
-        "fr": fr, "en": en,
-    }
+    en, ko = rng.choice(PROMPTS)
+    cfg = {"bg": rng.choice(THEMES), "en": en, "ko": ko}
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    thumb = _draw_thumb_layer(int(H * 0.58), int(W * 0.24))
 
     cmd = [
         settings.FFMPEG_BIN, "-y", "-loglevel", "error", "-nostats",
@@ -211,14 +167,12 @@ def make_relax_video(out_path: str | Path, seed: int | None = None) -> Path:
         str(out_path),
     ]
     total = FPS * DURATION_S
-    log.info("Relax: rendu %d frames (%s / %s)…", total, cfg["character"], cfg["fr"])
-    # stderr -> fichier (jamais un PIPE non drainé pendant l'écriture : ça
-    # remplit le buffer OS et fige ffmpeg — deadlock).
+    log.info("Relax: rendu %d frames (%s)…", total, cfg["en"])
     with tempfile.TemporaryFile() as errf:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errf)
         try:
             for i in range(total):
-                proc.stdin.write(_draw_frame(i / FPS, cfg).tobytes())
+                proc.stdin.write(_draw_frame(i / FPS, cfg, thumb).tobytes())
         finally:
             proc.stdin.close()
             code = proc.wait()
