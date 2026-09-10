@@ -164,6 +164,20 @@ RELAX_DRIVE_FOLDER_NAME: str = _get("RELAX_DRIVE_FOLDER_NAME", "clipping-bot-rel
 #: Nombre de vidéos relax générées par run.
 RELAX_PER_RUN: int = _get_int("RELAX_PER_RUN", 2)
 
+# --- Contenu faceless "valeur" (niche argent/IA) : voix off IA + sous-titres ---
+FACELESS_ENABLE: bool = _get_bool("FACELESS_ENABLE", True)
+FACELESS_DRIVE_FOLDER_NAME: str = _get("FACELESS_DRIVE_FOLDER_NAME", "clipping-bot-ai")
+FACELESS_PER_RUN: int = _get_int("FACELESS_PER_RUN", 2)
+#: Sujet/niche de la chaîne (pilote la génération de script).
+FACELESS_TOPIC: str = _get("FACELESS_TOPIC", "AI tools & automation to make money and work smarter")
+#: Voix edge-tts (gratuite). Ex. en-US-GuyNeural, en-US-AriaNeural, en-US-JennyNeural.
+FACELESS_VOICE: str = _get("FACELESS_VOICE", "en-US-GuyNeural")
+FACELESS_VOICE_RATE: str = _get("FACELESS_VOICE_RATE", "+8%")  # débit un peu plus punchy
+#: Longueur visée de la narration (mots). ~150 mots ≈ 60-70s (seuil Creator Rewards).
+FACELESS_WORDS: int = _get_int("FACELESS_WORDS", 150)
+#: B-roll libre de droits via Pexels (clé gratuite). Vide => fond dégradé animé.
+PEXELS_API_KEY: str | None = _get("PEXELS_API_KEY")
+
 # --- Nettoyage automatique du dossier clips (pour garder de la place) ---
 #: On purge les clips plus vieux que N heures à chaque cycle (0 = désactivé).
 DRIVE_CLEANUP_MAX_AGE_H: int = _get_int("DRIVE_CLEANUP_MAX_AGE_H", 48)

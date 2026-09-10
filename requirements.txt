@@ -36,8 +36,9 @@ opencv-python-headless==4.10.0.84     # lecture frames sans dépendance GUI (CI)
 # --- Bloc 7 : Publication TikTok ---
 # Upload-Post via API REST (requests, déjà présent).
 
-# --- Génération contenu "relax" (thumb-game) ---
+# --- Génération contenu (relax + faceless) ---
 Pillow>=10.0                          # dessin des frames (rendu 100% code, 0€)
+edge-tts>=6.1                         # voix off IA gratuite (chaîne faceless)
 
 # --- Commun ---
 python-dotenv==1.0.1                  # chargement .env en local (no-op en CI)
