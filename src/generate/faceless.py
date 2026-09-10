@@ -236,8 +236,8 @@ def _gradient_bg(duration: float, out: Path) -> Path:
     return out
 
 
-def _pexels_bg(duration: float, keywords: str, out: Path) -> Path | None:
-    """Télécharge un b-roll vertical libre de droits (Pexels). None si indispo."""
+def _pexels_bg(duration: float, keywords: str, out: Path, td: Path) -> Path | None:
+    """Montage de plusieurs b-rolls verticaux libres de droits (Pexels). None si KO."""
     if not settings.PEXELS_API_KEY:
         return None
     import requests
@@ -246,42 +246,62 @@ def _pexels_bg(duration: float, keywords: str, out: Path) -> Path | None:
         r = requests.get(
             "https://api.pexels.com/videos/search",
             headers={"Authorization": settings.PEXELS_API_KEY},
-            params={"query": keywords, "orientation": "portrait", "per_page": 12, "size": "medium"},
+            params={"query": keywords, "orientation": "portrait", "per_page": 15, "size": "medium"},
             timeout=settings.HTTP_TIMEOUT,
         )
         r.raise_for_status()
-        vids = r.json().get("videos", [])
-        best_url = None
-        best_h = 0
-        for v in vids:
+        # 1 lien portrait par vidéo (clips DISTINCTS => montage varié)
+        links: list[str] = []
+        for v in r.json().get("videos", []):
+            best, best_h = None, 0
             for f in v.get("video_files", []):
-                h = f.get("height") or 0
-                if (f.get("width") or 0) < (f.get("height") or 0) and h >= 1200 and h > best_h:
-                    best_h, best_url = h, f.get("link")
-        if not best_url:
+                w, h = f.get("width") or 0, f.get("height") or 0
+                if h > w and h >= 1000 and h > best_h:
+                    best_h, best = h, f.get("link")
+            if best:
+                links.append(best)
+        if not links:
             return None
-        raw = out.with_suffix(".src.mp4")
-        with requests.get(best_url, stream=True, timeout=60) as dl:
-            dl.raise_for_status()
-            with open(raw, "wb") as fh:
-                for chunk in dl.iter_content(1 << 20):
-                    fh.write(chunk)
-        # scale/crop 1080x1920, boucle jusqu'à la durée voulue, léger assombrissement
-        cmd = [
-            settings.FFMPEG_BIN, "-y", "-loglevel", "error",
-            "-stream_loop", "-1", "-i", str(raw), "-t", f"{duration:.2f}",
-            "-vf", f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-                   f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},eq=brightness=-0.06",
-            "-an", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            str(out),
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        raw.unlink(missing_ok=True)
+
+        n = max(2, min(4, round(duration / 12)))
+        links = links[:n]
+        seg = duration / len(links)
+        vf = (f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+              f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},eq=brightness=-0.06,setsar=1")
+        seg_files: list[Path] = []
+        for i, link in enumerate(links):
+            raw = td / f"px_{i}.mp4"
+            with requests.get(link, stream=True, timeout=90) as dl:
+                dl.raise_for_status()
+                with open(raw, "wb") as fh:
+                    for chunk in dl.iter_content(1 << 20):
+                        fh.write(chunk)
+            clip = td / f"pxseg_{i}.mp4"
+            proc = subprocess.run(
+                [settings.FFMPEG_BIN, "-y", "-loglevel", "error",
+                 "-stream_loop", "-1", "-i", str(raw), "-t", f"{seg:.2f}",
+                 "-vf", vf, "-an", "-r", "30", "-c:v", "libx264", "-preset", "veryfast",
+                 "-pix_fmt", "yuv420p", str(clip)],
+                capture_output=True, text=True,
+            )
+            raw.unlink(missing_ok=True)
+            if proc.returncode == 0:
+                seg_files.append(clip)
+        if not seg_files:
+            return None
+        listf = td / "px_concat.txt"
+        listf.write_text("".join(f"file '{c.as_posix()}'\n" for c in seg_files), encoding="utf-8")
+        proc = subprocess.run(
+            [settings.FFMPEG_BIN, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+             "-i", str(listf), "-c", "copy", str(out)],
+            capture_output=True, text=True,
+        )
         if proc.returncode != 0:
             return None
+        log.info("Faceless: b-roll Pexels (%d extraits)", len(seg_files))
         return out
-    except Exception as exc:  # noqa: BLE001 - on retombe sur le dégradé
-        log.warning("Pexels indisponible (%s) — fond dégradé.", exc)
+    except Exception as exc:  # noqa: BLE001 - repli sur l'IA / dégradé
+        log.warning("Pexels indisponible (%s) — repli.", exc)
         return None
 
 
@@ -301,12 +321,17 @@ def make_faceless_video(out_path: str | Path, script: dict | None = None) -> dic
         if dur < 2:
             raise FacelessError("Voix off trop courte")
 
-        # Visuel : images IA (Pollinations, gratuit) > b-roll Pexels > dégradé.
-        bg = (
-            _ai_slideshow_bg(dur, script.get("scenes") or [], tdp / "bg.mp4", tdp)
-            or _pexels_bg(dur, script["bg_keywords"], tdp / "bg.mp4")
-            or _gradient_bg(dur, tdp / "bg.mp4")
-        )
+        # Visuel : si clé Pexels => b-roll réel (fiable/rapide) en priorité,
+        # sinon images IA (Pollinations, gratuit) ; dégradé animé en dernier recours.
+        bg = None
+        if settings.PEXELS_API_KEY:
+            bg = _pexels_bg(dur, script["bg_keywords"], tdp / "bg.mp4", tdp)
+            if not bg:
+                bg = _ai_slideshow_bg(dur, script.get("scenes") or [], tdp / "bg.mp4", tdp)
+        else:
+            bg = _ai_slideshow_bg(dur, script.get("scenes") or [], tdp / "bg.mp4", tdp)
+        if not bg:
+            bg = _gradient_bg(dur, tdp / "bg.mp4")
 
         # vidéo (bg) + audio (voix)
         raw = tdp / "raw.mp4"
