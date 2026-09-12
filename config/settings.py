@@ -196,8 +196,21 @@ ASIA_MIN_VIEWERS: int = _get_int("ASIA_MIN_VIEWERS", 150)
 ASIA_CLIP_MIN_VIEWS: int = _get_int("ASIA_CLIP_MIN_VIEWS", 30)
 ASIA_PER_RUN: int = _get_int("ASIA_PER_RUN", 3)
 
-# --- Clips Reddit "cute/animaux/satisfying" (public thaï/asie, langue-agnostique) ---
-REDDIT_ENABLE: bool = _get_bool("REDDIT_ENABLE", True)
+# --- Clips "cute/animaux/satisfying" via Pexels (public thaï/asie) ---
+# Source fiable (Reddit a verrouillé son API). Réutilise PEXELS_API_KEY.
+CUTE_ENABLE: bool = _get_bool("CUTE_ENABLE", True)
+CUTE_DRIVE_FOLDER_NAME: str = _get("CUTE_DRIVE_FOLDER_NAME", "clipping-bot-cute")
+CUTE_QUERIES: list[str] = _get_list(
+    "CUTE_QUERIES",
+    ["cute puppy", "kitten", "funny cat", "funny dog", "baby animals",
+     "golden retriever", "hamster", "oddly satisfying", "cute animals"],
+)
+CUTE_PER_QUERY: int = _get_int("CUTE_PER_QUERY", 8)
+CUTE_PER_RUN: int = _get_int("CUTE_PER_RUN", 3)
+CUTE_CLIP_MAX_S: int = _get_int("CUTE_CLIP_MAX_S", 30)
+
+# --- Clips Reddit "cute" (API désormais verrouillée par Reddit — dormant) ---
+REDDIT_ENABLE: bool = _get_bool("REDDIT_ENABLE", False)
 REDDIT_DRIVE_FOLDER_NAME: str = _get("REDDIT_DRIVE_FOLDER_NAME", "clipping-bot-cute")
 #: API OAuth Reddit (app "script" — gratuite). Read-only public via client_credentials.
 REDDIT_CLIENT_ID: str | None = _get("REDDIT_CLIENT_ID")

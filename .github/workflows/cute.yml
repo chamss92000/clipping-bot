@@ -1,6 +1,6 @@
-name: reddit-cute
+name: cute-clips
 
-# Clips Reddit (animaux mignons / satisfying) pour l'audience thaï/asie. Cron dédié.
+# Clips cute/animaux/satisfying (Pexels) pour l'audience thaï/asie. Cron dédié.
 on:
   schedule:
     - cron: "15 6,14,22 * * *"   # 3x/jour
@@ -12,7 +12,7 @@ on:
         default: false
 
 concurrency:
-  group: reddit-cute
+  group: cute-clips
   cancel-in-progress: false
 
 jobs:
@@ -41,10 +41,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run reddit harvester
+      - name: Run cute harvester
         env:
-          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
-          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
@@ -53,19 +52,18 @@ jobs:
           NOTIFY_EMAIL_TO: ${{ vars.NOTIFY_EMAIL_TO || 'ce.boutajar@gmail.com' }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          REDDIT_SUBREDDITS: ${{ vars.REDDIT_SUBREDDITS || 'AnimalsBeingDerps,aww,AnimalsBeingBros,Zoomies,rarepuppers,cats,oddlysatisfying,Eyebleach' }}
-          REDDIT_MIN_UPS: ${{ vars.REDDIT_MIN_UPS || '2000' }}
-          REDDIT_PER_RUN: ${{ vars.REDDIT_PER_RUN || '3' }}
+          CUTE_QUERIES: ${{ vars.CUTE_QUERIES || 'cute puppy,kitten,funny cat,funny dog,baby animals,golden retriever,hamster,oddly satisfying,cute animals' }}
+          CUTE_PER_RUN: ${{ vars.CUTE_PER_RUN || '3' }}
           DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
           LOG_LEVEL: INFO
           DRY_RUN: ${{ inputs.dry_run }}
-        run: python reddit_main.py
+        run: python cute_main.py
 
       - name: Upload debug (si échec)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-debug
-          path: reddit.log
+          name: cute-debug
+          path: cute.log
           if-no-files-found: ignore
           retention-days: 5
