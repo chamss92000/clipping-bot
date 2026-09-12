@@ -1,0 +1,71 @@
+name: reddit-cute
+
+# Clips Reddit (animaux mignons / satisfying) pour l'audience thaï/asie. Cron dédié.
+on:
+  schedule:
+    - cron: "15 6,14,22 * * *"   # 3x/jour
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Produire sans uploader"
+        type: boolean
+        default: false
+
+concurrency:
+  group: reddit-cute
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/microsoft-prod.list || true
+          sudo apt-get update || true
+          sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run reddit harvester
+        env:
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          NOTIFY_EMAIL_ENABLE: ${{ vars.NOTIFY_EMAIL_ENABLE || 'true' }}
+          NOTIFY_EMAIL_TO: ${{ vars.NOTIFY_EMAIL_TO || 'ce.boutajar@gmail.com' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REDDIT_SUBREDDITS: ${{ vars.REDDIT_SUBREDDITS || 'AnimalsBeingDerps,aww,AnimalsBeingBros,Zoomies,rarepuppers,cats,oddlysatisfying,Eyebleach' }}
+          REDDIT_MIN_UPS: ${{ vars.REDDIT_MIN_UPS || '2000' }}
+          REDDIT_PER_RUN: ${{ vars.REDDIT_PER_RUN || '3' }}
+          DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
+          LOG_LEVEL: INFO
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python reddit_main.py
+
+      - name: Upload debug (si échec)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-debug
+          path: reddit.log
+          if-no-files-found: ignore
+          retention-days: 5

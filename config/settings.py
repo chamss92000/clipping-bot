@@ -185,6 +185,36 @@ FACELESS_MAX_IMAGES: int = _get_int("FACELESS_MAX_IMAGES", 4)
 #: B-roll libre de droits via Pexels (clé gratuite), en repli si l'IA échoue.
 PEXELS_API_KEY: str | None = _get("PEXELS_API_KEY")
 
+# --- Clips "Asie" (Thaïlande + Corée) : clips Twitch de leur communauté ---
+# Simple à récupérer (API Helix, téléchargeable en CI), orienté public thaï.
+ASIA_ENABLE: bool = _get_bool("ASIA_ENABLE", True)
+ASIA_DRIVE_FOLDER_NAME: str = _get("ASIA_DRIVE_FOLDER_NAME", "clipping-bot-asia")
+#: Langues ciblées (Twitch). Thaï en priorité (la Corée est peu présente sur Twitch).
+ASIA_LANGUAGES: list[str] = _get_list("ASIA_LANGUAGES", ["th"])
+#: Seuil viewers bas : les streamers thaï sont plus petits qu'en EN/FR.
+ASIA_MIN_VIEWERS: int = _get_int("ASIA_MIN_VIEWERS", 150)
+ASIA_CLIP_MIN_VIEWS: int = _get_int("ASIA_CLIP_MIN_VIEWS", 30)
+ASIA_PER_RUN: int = _get_int("ASIA_PER_RUN", 3)
+
+# --- Clips Reddit "cute/animaux/satisfying" (public thaï/asie, langue-agnostique) ---
+REDDIT_ENABLE: bool = _get_bool("REDDIT_ENABLE", True)
+REDDIT_DRIVE_FOLDER_NAME: str = _get("REDDIT_DRIVE_FOLDER_NAME", "clipping-bot-cute")
+#: API OAuth Reddit (app "script" — gratuite). Read-only public via client_credentials.
+REDDIT_CLIENT_ID: str | None = _get("REDDIT_CLIENT_ID")
+REDDIT_CLIENT_SECRET: str | None = _get("REDDIT_CLIENT_SECRET")
+REDDIT_USER_AGENT: str = _get("REDDIT_USER_AGENT", "clipping-bot/1.0 by u/clippingbot")
+#: Subreddits vidéo à fort attrait pan-asiatique (animaux mignons + satisfying).
+REDDIT_SUBREDDITS: list[str] = _get_list(
+    "REDDIT_SUBREDDITS",
+    ["AnimalsBeingDerps", "aww", "AnimalsBeingBros", "Zoomies", "rarepuppers",
+     "cats", "oddlysatisfying", "Eyebleach"],
+)
+REDDIT_TIME: str = _get("REDDIT_TIME", "week")   # hour|day|week|month|year|all
+REDDIT_MIN_UPS: int = _get_int("REDDIT_MIN_UPS", 2000)
+REDDIT_PER_RUN: int = _get_int("REDDIT_PER_RUN", 3)
+#: Durée max d'un clip Reddit (on tronque les longues vidéos).
+REDDIT_CLIP_MAX_S: int = _get_int("REDDIT_CLIP_MAX_S", 60)
+
 # --- Nettoyage automatique du dossier clips (pour garder de la place) ---
 #: On purge les clips plus vieux que N heures à chaque cycle (0 = désactivé).
 DRIVE_CLEANUP_MAX_AGE_H: int = _get_int("DRIVE_CLEANUP_MAX_AGE_H", 48)

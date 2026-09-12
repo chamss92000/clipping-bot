@@ -99,7 +99,11 @@ def _top_streams(min_viewers: int, limit: int, languages: list[str]) -> list[dic
     langs = set(languages)
     # On pagine jusqu'à avoir assez de streams au-dessus du seuil.
     while len(collected) < limit:
-        params = {"first": 100}
+        params: dict = {"first": 100}
+        # On demande directement les langues à l'API : indispensable pour les
+        # langues "petites" (ex. thaï) qui ne remontent pas dans le top global.
+        if langs:
+            params["language"] = list(langs)
         if cursor:
             params["after"] = cursor
         data = _helix_get("streams", params)

@@ -1,0 +1,73 @@
+name: asia-clips
+
+# Clips Twitch de la communauté thaï (public thaï). Cron dédié.
+on:
+  schedule:
+    - cron: "45 5,17 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Produire sans uploader"
+        type: boolean
+        default: false
+
+concurrency:
+  group: asia-clips
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/microsoft-prod.list || true
+          sudo apt-get update || true
+          sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -U yt-dlp
+
+      - name: Run asia clips
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          NOTIFY_EMAIL_ENABLE: ${{ vars.NOTIFY_EMAIL_ENABLE || 'true' }}
+          NOTIFY_EMAIL_TO: ${{ vars.NOTIFY_EMAIL_TO || 'ce.boutajar@gmail.com' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ASIA_LANGUAGES: ${{ vars.ASIA_LANGUAGES || 'th' }}
+          ASIA_MIN_VIEWERS: ${{ vars.ASIA_MIN_VIEWERS || '150' }}
+          ASIA_PER_RUN: ${{ vars.ASIA_PER_RUN || '3' }}
+          FRAMING: ${{ vars.FRAMING || 'auto' }}
+          DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
+          LOG_LEVEL: INFO
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python asia_main.py
+
+      - name: Upload debug (si échec)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asia-debug
+          path: asia.log
+          if-no-files-found: ignore
+          retention-days: 5
