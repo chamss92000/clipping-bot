@@ -195,24 +195,32 @@ def detect_clips(
     top_streams: int | None = None,
     clips_per: int | None = None,
     languages: list[str] | None = None,
+    include_targets: bool = True,
 ) -> list[VideoCandidate]:
     """Détecte les clips Twitch DÉJÀ viraux (API Clips) chez les streamers chauds.
 
     Bien supérieur au clipping de VODs : chaque clip est un moment sélectionné
     par la communauté, court, téléchargeable, et filtrable par langue.
+    Mode campagne : les créateurs de TARGET_STREAMERS_TWITCH passent en priorité
+    (même hors live) ; avec TARGET_ONLY, ce sont les SEULS clippés.
     """
     min_viewers = min_viewers if min_viewers is not None else settings.TWITCH_MIN_VIEWERS
     top_streams = top_streams or settings.TWITCH_TOP_STREAMS
     clips_per = clips_per or settings.TWITCH_CLIPS_PER_STREAMER
     languages = languages if languages is not None else settings.TWITCH_LANGUAGES
     langs = set(languages)
+    targets = [t.lower() for t in settings.TARGET_STREAMERS_TWITCH] if include_targets else []
 
-    try:
-        streams = _top_streams(min_viewers, top_streams, languages)
-    except Exception as exc:  # noqa: BLE001
-        log.error("Twitch: échec récupération top streams : %s", exc)
-        return []
-    log.info("Twitch: %d streamers chauds, recherche de leurs clips…", len(streams))
+    if settings.TARGET_ONLY and targets:
+        streams = []
+        log.info("Twitch: mode campagne — uniquement %s", ", ".join(targets))
+    else:
+        try:
+            streams = _top_streams(min_viewers, top_streams, languages)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Twitch: échec récupération top streams : %s", exc)
+            streams = []
+        log.info("Twitch: %d streamers chauds, recherche de leurs clips…", len(streams))
 
     started_at = (
         datetime.now(timezone.utc) - timedelta(days=settings.TWITCH_CLIPS_DAYS)
@@ -237,6 +245,29 @@ def detect_clips(
             if cand and cand.uid not in candidates:
                 candidates[cand.uid] = cand
 
+    # --- Créateurs ciblés (campagnes payées à la vue) : prioritaires, hors live ---
+    if targets:
+        try:
+            users = _helix_get("users", {"login": targets}).get("data", [])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Twitch: créateurs ciblés introuvables : %s", exc)
+            users = []
+        for u in users:
+            try:
+                clips = _recent_clips(u["id"], max(clips_per, 20), started_at)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Twitch: clips de %s indisponibles : %s", u.get("login"), exc)
+                continue
+            for clip in clips:
+                if int(clip.get("view_count", 0)) < settings.TWITCH_CLIP_MIN_VIEWS:
+                    continue
+                cand = _clip_to_candidate(clip)
+                if cand:
+                    cand.score = round(cand.score + settings.TARGET_SCORE_BOOST, 2)
+                    cand.extra["target"] = True
+                    candidates[cand.uid] = cand
+        log.info("Twitch: %d créateur(s) ciblé(s) scanné(s)", len(users))
+
     result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
 
     # --- Nom du jeu : filtre catégorie (ex. GTA RP) + diversité par jeu ---
@@ -249,6 +280,9 @@ def detect_clips(
     for c in result:
         name = games.get(str(c.extra.get("game_id")), "")
         c.extra["game_name"] = name
+        if c.extra.get("target"):  # campagne : on clippe ce que fait le créateur, quel que soit le jeu
+            filtered.append(c)
+            continue
         low = name.lower()
         if any(b in low for b in blacklist):
             dropped_game += 1

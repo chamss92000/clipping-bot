@@ -185,18 +185,26 @@ def _channel_clips(sess: requests.Session, slug: str, count: int) -> list[dict]:
 
 def detect_clips(channels: list[str] | None = None) -> list[VideoCandidate]:
     """Clips Kick DÉJÀ viraux (triés par vues). Best-effort, [] si bloqué."""
-    channels = list(channels or settings.KICK_CHANNELS)
-    # On inclut les chaînes FR connues pour alimenter le marché francophone.
-    for slug in settings.KICK_FR_CHANNELS:
-        if slug not in channels:
-            channels.append(slug)
+    targets = [t.lower() for t in settings.TARGET_CHANNELS_KICK]
     sess = _session()
-    discovered = _discover_featured(sess, settings.KICK_FEATURED_LIMIT)
-    for slug in discovered:
-        if slug not in channels:
-            channels.append(slug)
+    if settings.TARGET_ONLY:
+        # Mode campagne : uniquement les créateurs ciblés (aucun si seuls des
+        # créateurs Twitch sont visés).
+        channels = list(targets)
+    else:
+        channels = list(channels or settings.KICK_CHANNELS)
+        # On inclut les chaînes FR connues pour alimenter le marché francophone.
+        for slug in settings.KICK_FR_CHANNELS + targets:
+            if slug not in channels:
+                channels.append(slug)
+        discovered = _discover_featured(sess, settings.KICK_FEATURED_LIMIT)
+        for slug in discovered:
+            if slug not in channels:
+                channels.append(slug)
 
     candidates: dict[str, VideoCandidate] = {}
+    blacklist = [b.lower() for b in settings.TWITCH_GAME_BLACKLIST]
+    dropped_game = 0
     for slug in channels:
         for clip in _channel_clips(sess, slug, settings.KICK_CLIPS_PER_CHANNEL):
             cid = clip.get("id")
@@ -204,6 +212,13 @@ def detect_clips(channels: list[str] | None = None) -> list[VideoCandidate]:
                 continue
             views = int(clip.get("view_count") or clip.get("views") or 0)
             if views < settings.KICK_CLIP_MIN_VIEWS:
+                continue
+            is_target = slug.lower() in targets
+            # Même filtre de jeu que Twitch (sinon le GTA RP fuit via Kick) —
+            # sauf pour un créateur ciblé en campagne.
+            cat = ((clip.get("category") or {}).get("name") or "").lower()
+            if not is_target and cat and any(b in cat for b in blacklist):
+                dropped_game += 1
                 continue
             dur = clip.get("duration")
             dur = int(round(float(dur))) if dur else None
@@ -217,14 +232,17 @@ def detect_clips(channels: list[str] | None = None) -> list[VideoCandidate]:
                 duration_s=dur,
                 published_at=clip.get("created_at"),
                 thumbnail=clip.get("thumbnail_url"),
-                score=_clip_trend_score(views, clip.get("created_at")),
-                extra={"is_clip": True, "slug": slug,
+                score=_clip_trend_score(views, clip.get("created_at"))
+                + (settings.TARGET_SCORE_BOOST if is_target else 0.0),
+                extra={"is_clip": True, "slug": slug, "target": is_target,
                        "category": (clip.get("category") or {}).get("name")},
             )
             if cand.uid not in candidates:
                 candidates[cand.uid] = cand
 
     result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
+    if dropped_game:
+        log.info("Kick: %d clip(s) écarté(s) par le filtre de jeu", dropped_game)
     log.info("Kick: %d clips viraux candidats", len(result))
     return result
 

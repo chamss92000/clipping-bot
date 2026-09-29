@@ -1,9 +1,9 @@
 name: clipping-pipeline
 
-# Bloc 8 — Orchestration : cron toutes les 6h + déclenchement manuel.
+# Bloc 8 — Orchestration : 1 livraison/jour (19:00 UTC = prime time FR + US en live) + manuel.
 on:
   schedule:
-    - cron: "0 */6 * * *"      # 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: "0 19 * * *"       # 1x/jour : streamers FR (21h) et US (15h ET) en live
   workflow_dispatch:
     inputs:
       detect_only:
@@ -111,11 +111,18 @@ jobs:
           TWITCH_GAME_BLACKLIST: ${{ vars.TWITCH_GAME_BLACKLIST || 'grand theft auto' }}
           # diversité : max de clips gardés par jeu
           TWITCH_MAX_CLIPS_PER_GAME: ${{ vars.TWITCH_MAX_CLIPS_PER_GAME || '3' }}
+          # --- Mode campagne (clips payés à la vue) : créateurs ciblés en priorité ---
+          # ex. TARGET_STREAMERS_TWITCH=kaicenat,ponce  |  TARGET_ONLY=true => uniquement eux
+          TARGET_STREAMERS_TWITCH: ${{ vars.TARGET_STREAMERS_TWITCH || '' }}
+          TARGET_CHANNELS_KICK: ${{ vars.TARGET_CHANNELS_KICK || '' }}
+          TARGET_ONLY: ${{ vars.TARGET_ONLY || 'false' }}
+          # --- Titre : outline (gros texte blanc/jaune contour noir) | box (boîtes blanches natives TikTok) ---
+          TITLE_STYLE: ${{ vars.TITLE_STYLE || 'outline' }}
           # fenêtre de fraîcheur des clips, en jours
           TWITCH_CLIPS_DAYS: ${{ vars.TWITCH_CLIPS_DAYS || '7' }}
           # objectif de clips PAR chaîne (fr + intl) — chaque marché a sa place réservée
-          CLIPS_PER_MARKET: ${{ vars.CLIPS_PER_MARKET || '2' }}
-          MAX_CLIPS_PER_RUN: ${{ vars.MAX_CLIPS_PER_RUN || '4' }}
+          CLIPS_PER_MARKET: ${{ vars.CLIPS_PER_MARKET || '3' }}
+          MAX_CLIPS_PER_RUN: ${{ vars.MAX_CLIPS_PER_RUN || '6' }}
           # YouTube comme source : off par defaut (anti-bot en CI). Mets 'true' + cookies pour l'activer.
           YOUTUBE_SOURCE_ENABLE: ${{ vars.YOUTUBE_SOURCE_ENABLE || 'false' }}
           # --- Notification e-mail (récap des clips déposés) ---

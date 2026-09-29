@@ -57,7 +57,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{settings.SUB_FONT},{settings.SUB_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&H80000000,-1,0,0,0,100,100,0,0,1,{settings.SUB_OUTLINE_WIDTH},{settings.SUB_SHADOW},2,60,60,{settings.SUB_MARGIN_V},1
-Style: Title,{settings.SUB_FONT},{settings.TITLE_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&HB0000000,-1,0,0,0,100,100,0,0,{3 if settings.TITLE_BOX else 1},4,1,8,90,90,{settings.TITLE_MARGIN_V},1
+Style: Title,{settings.SUB_FONT},{settings.TITLE_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&HB0000000,-1,0,0,0,100,100,0,0,{3 if settings.TITLE_BOX else 1},6,2,8,80,80,{settings.TITLE_MARGIN_V},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -116,6 +116,39 @@ def _title_text(title: str) -> str:
     return t
 
 
+#: Mots "punch" surlignés en jaune dans le titre (curiosité/émotion/chiffres).
+_POWER_WORDS = {
+    "stop", "never", "now", "free", "secret", "secrets", "best", "worst", "new",
+    "money", "rich", "ai", "fast", "instantly", "everyone", "nobody", "everything",
+    "nothing", "more", "less", "dangerous", "hack", "hacks", "trick", "tricks",
+    "mistake", "mistakes", "biggest", "only", "first", "last", "real", "truth",
+    "proven", "wrong", "right", "win", "lose", "hidden", "insane", "crazy", "ultimate",
+}
+
+
+def _title_markup(title: str) -> str:
+    """Titre en ASS avec les mots 'punch' colorés en jaune (le reste en blanc)."""
+    text = _title_text(title)
+    if not settings.TITLE_HIGHLIGHT:
+        return text
+    hl, primary = settings.SUB_HIGHLIGHT_COLOR, settings.SUB_PRIMARY_COLOR
+    words = text.split()
+    if not words:
+        return text
+    # Choisit les mots à surligner : "power words" + nombres ; à défaut, le plus long.
+    idx = {i for i, w in enumerate(words)
+           if w.strip(_STRIP_CHARS).lower() in _POWER_WORDS or any(c.isdigit() for c in w)}
+    if not idx:
+        idx = {max(range(len(words)), key=lambda i: len(words[i]))}
+    out = []
+    for i, w in enumerate(words):
+        if i in idx:
+            out.append(f"{{\\c{hl}}}{w}{{\\c{primary}}}")
+        else:
+            out.append(w)
+    return " ".join(out)
+
+
 def build_ass(
     words: list[Word],
     out_ass: str | Path,
@@ -149,7 +182,7 @@ def build_ass(
     if settings.TITLE_ENABLE and title:
         end_t = clip_duration if clip_duration else (rel[-1].end if rel else 30.0)
         events.append(
-            f"Dialogue: 0,{_ass_time(0)},{_ass_time(end_t + 0.5)},Title,,0,0,0,,{_title_text(title)}"
+            f"Dialogue: 0,{_ass_time(0)},{_ass_time(end_t + 0.5)},Title,,0,0,0,,{_title_markup(title)}"
         )
 
     for chunk in _chunk_words(rel, settings.SUB_MAX_WORDS_PER_LINE):
@@ -180,18 +213,27 @@ def build_ass(
     return out_ass
 
 
-def burn_subtitles(clip_path: str | Path, ass_path: str | Path, out_path: str | Path) -> Path:
-    """Incruste l'ASS dans le clip via FFmpeg (filtre subtitles)."""
+def burn_subtitles(
+    clip_path: str | Path,
+    ass_path: str | Path | None,
+    out_path: str | Path,
+    title_png: str | Path | None = None,
+    title_center_y: int | None = None,
+) -> Path:
+    """Incruste les sous-titres ASS (optionnels) et le titre-image (optionnel).
+
+    Le titre entre avec une animation courte (glissé de 50px vers le bas +
+    fondu en 0,3s) — l'œil est attiré dès la 1re seconde, comme un vrai edit.
+    """
     clip_path = Path(clip_path).resolve()
-    ass_path = Path(ass_path).resolve()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path = out_path.resolve()
 
     # cwd = dossier temp + nom relatif : contourne le ':' du chemin Windows.
     with tempfile.TemporaryDirectory() as td:
-        local_ass = Path(td) / "subs.ass"
-        shutil.copyfile(ass_path, local_ass)
+        if ass_path:
+            shutil.copyfile(Path(ass_path).resolve(), Path(td) / "subs.ass")
         # Police embarquée : on copie les .ttf dans le dossier temp et on pointe
         # `fontsdir=.` (relatif, sans ':') => même rendu partout, sans dépendre
         # des polices installées sur la machine.
@@ -212,11 +254,25 @@ def burn_subtitles(clip_path: str | Path, ass_path: str | Path, out_path: str | 
             ]
         else:
             audio_args = ["-c:a", "copy"]
+        subs_filter = f"subtitles=subs.ass{fonts_opt}" if ass_path else "null"
+        if title_png:
+            shutil.copyfile(Path(title_png).resolve(), Path(td) / "title.png")
+            cy = title_center_y if title_center_y is not None else int(settings.OUTPUT_HEIGHT * 0.2)
+            graph = (
+                f"[0:v]{subs_filter}[s];"
+                "[1:v]format=rgba,fade=t=in:st=0:d=0.3:alpha=1[t];"
+                f"[s][t]overlay=x=(W-w)/2:y='{cy}-h/2-50*pow(1-min(t/0.3,1),2)'"
+                ":shortest=1:format=auto[v]"
+            )
+            inputs = ["-i", str(clip_path), "-loop", "1", "-i", "title.png"]
+            vmap = ["-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
+        else:
+            inputs = ["-i", str(clip_path)]
+            vmap = ["-vf", subs_filter]
         cmd = [
-            settings.FFMPEG_BIN, "-y", "-i", str(clip_path),
-            "-vf", f"subtitles=subs.ass{fonts_opt}",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-movflags", "+faststart",
+            settings.FFMPEG_BIN, "-y", *inputs, *vmap,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             *audio_args,
             str(out_path),
         ]

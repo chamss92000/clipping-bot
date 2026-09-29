@@ -189,16 +189,41 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(v, hi))
 
 
-def _blur_fit_graph() -> str:
-    """Image entière tenant dans le 9:16, posée sur un fond = elle-même floutée."""
+def _blur_fit_graph(src_w: int = 16, src_h: int = 9) -> str:
+    """Vidéo au centre sur un fond = elle-même floutée.
+
+    Source paysage : la vidéo occupe BLUR_FG_HEIGHT_FRAC de la hauteur (bords
+    légèrement rognés) au lieu d'être réduite à un mince bandeau (~32% de
+    l'écran avec un simple "fit") — c'est ce qui rend un clip regardable sur
+    TikTok. Source portrait/carrée : on la fait tenir entièrement.
+    """
     w, h = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
+    if src_h and src_w / src_h > 1.05:  # paysage
+        fg_h = int(h * settings.BLUR_FG_HEIGHT_FRAC) // 2 * 2
+        fg = f"[fg]scale=-2:{fg_h},crop='min(iw,{w})':{fg_h}[fgs];"
+    else:
+        fg = f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];"
     return (
         "[0:v]split=2[bg][fg];"
         f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
-        f"crop={w}:{h},boxblur=24:2,eq=brightness=-0.08[bgb];"
-        f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];"
+        f"crop={w}:{h},boxblur=28:2,eq=brightness=-0.12[bgb];"
+        f"{fg}"
         "[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
     )
+
+
+#: Dernier mode de cadrage appliqué ("split" | "face" | "blur") — sert à placer
+#: le titre au meilleur endroit (jointure, bande floutée, tiers haut).
+LAST_MODE: str = "blur"
+#: Boîte du visage (x0, y0, x1, y1) dans la VIDÉO FINALE 1080x1920, ou None —
+#: permet au titre d'éviter de recouvrir le visage du streamer.
+LAST_FACE_OUT: tuple[float, float, float, float] | None = None
+
+
+def _map_box(face, crop_x: float, crop_y: float, sx: float, sy: float, dy: float = 0.0):
+    fx, fy, fw, fh = face
+    return ((fx - crop_x) * sx, (fy - crop_y) * sy + dy,
+            (fx + fw - crop_x) * sx, (fy + fh - crop_y) * sy + dy)
 
 
 def _split_graph(src_w: int, src_h: int, face) -> str:
@@ -241,6 +266,9 @@ def _split_graph(src_w: int, src_h: int, face) -> str:
     game_x = _even(_clamp((src_w - game_w) / 2, 0, src_w - game_w))
     game_y = _even(_clamp((src_h - game_h) / 2, 0, src_h - game_h))
 
+    global LAST_FACE_OUT
+    LAST_FACE_OUT = _map_box(face, cam_x, cam_y, ow / cam_w, top_h / cam_h)
+
     return (
         f"[0:v]crop={cam_w}:{cam_h}:{cam_x}:{cam_y},"
         f"scale={ow}:{top_h},setsar=1[top];"
@@ -271,15 +299,22 @@ def _decide_mode(boxes, src_w: int, src_h: int) -> tuple[str, tuple | None]:
         return "blur", None
 
     fh_ratio = med[3] / src_h
-    if fh_ratio >= settings.FACE_BIG_RATIO:
+    # Position du visage : un vrai "talking head" (IRL/just chatting) est au
+    # centre du cadre ; une facecam posée sur du gameplay est en bord/coin.
+    # Sans ce test, une grosse facecam en bas d'écran partait en crop "visage"
+    # (gameplay rogné, visage coupé) au lieu d'un split-stack.
+    cx = (med[0] + med[2] / 2) / src_w
+    cy = (med[1] + med[3] / 2) / src_h
+    central = 0.28 <= cx <= 0.72 and 0.12 <= cy <= 0.62
+    if fh_ratio >= settings.FACE_BIG_RATIO and central:
         mode = "face"
     elif fh_ratio >= settings.FACE_CAM_MIN_RATIO:
         mode = "split"
     else:
         mode = "blur"
     log.info(
-        "Clip: cadrage=%s (visage %.0f%% des frames, hauteur=%.1f%% du cadre)",
-        mode, rate * 100, fh_ratio * 100,
+        "Clip: cadrage=%s (visage %.0f%% des frames, hauteur=%.1f%%, centre=(%.2f,%.2f))",
+        mode, rate * 100, fh_ratio * 100, cx, cy,
     )
     return mode, med
 
@@ -297,6 +332,8 @@ def make_vertical_clip(
     out_path = out_path.resolve()
     ow, oh = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
 
+    global LAST_FACE_OUT
+    LAST_FACE_OUT = None
     with tempfile.TemporaryDirectory() as td:
         seg = _extract_segment(source_path, start, end, Path(td) / "seg.mp4")
         boxes, w, h = _sample_faces(seg)
@@ -322,6 +359,7 @@ def make_vertical_clip(
             crop_w = _even(min(w, h * target_ar))
             fcx = med[0] + med[2] / 2
             crop_x = _even(_clamp(fcx - crop_w / 2, 0, w - crop_w))
+            LAST_FACE_OUT = _map_box(med, crop_x, 0, ow / crop_w, oh / crop_h)
             graph = (
                 f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:0,"
                 f"scale={ow}:{oh},setsar=1[v]"
@@ -332,10 +370,12 @@ def make_vertical_clip(
         else:  # blur
             cmd = [
                 settings.FFMPEG_BIN, "-y", "-i", str(seg),
-                "-filter_complex", _blur_fit_graph(), *common_tail,
+                "-filter_complex", _blur_fit_graph(w, h), *common_tail,
             ]
             _run_ffmpeg(cmd, "cadrage fond flou", cwd=td)
 
+    global LAST_MODE
+    LAST_MODE = mode
     log.info("Clip: écrit %s (%dx%d, mode=%s)", out_path.name, ow, oh, mode)
     return out_path
 

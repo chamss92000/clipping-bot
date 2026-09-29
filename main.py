@@ -30,6 +30,10 @@ from src.utils.logging import attach_file_handler, get_logger
 
 log = get_logger("main")
 
+#: Langues en alphabet latin : les seules où les sous-titres mot-à-mot s'affichent bien.
+_LATIN_LANGS = {"fr", "en", "es", "de", "it", "pt", "nl", "pl", "tr", "sv", "da", "no",
+                "fi", "ro", "cs", "hu", "id", "ms", "tl", "ca"}
+
 
 def _slugify(text: str, max_len: int = 48) -> str:
     """Titre -> nom de fichier lisible et sûr (ascii, tirets)."""
@@ -63,8 +67,10 @@ def _process_source(
         budget = settings.MAX_CLIPS_PER_RUN
     # Imports tardifs : n'importe torch/mediapipe que si on traite réellement.
     from src.downloader.download import download, download_planned
+    from src.editing import clip as clip_mod
     from src.editing.clip import make_vertical_clip
     from src.editing.subtitles import build_ass, burn_subtitles
+    from src.editing.title_card import render_title, title_center_y
     from src.publisher.tiktok import build_caption, next_publish_slot, publish
     from src.transcription.whisper_transcribe import transcribe
     from src.viral.gemini_detect import ViralMoment, detect_moments, generate_caption
@@ -93,12 +99,21 @@ def _process_source(
             continue
 
         words = [w for s in transcript.segments for w in s.words]
+        if (transcript.language or "en")[:2] not in _LATIN_LANGS:
+            # La police des sous-titres (Anton) n'a pas ces écritures et le
+            # découpage mot-à-mot de Whisper y est faux (thaï, CJK…) => illisible.
+            log.info("  Langue '%s' non latine : pas de sous-titres mot-à-mot.", transcript.language)
+            words = []
 
         if is_clip:
             # Le clip EST le moment viral : on prend toute sa durée, et on
             # génère juste une accroche (Gemini) à partir du titre + transcript.
             end = min(dl.duration_s, settings.CLIP_MAX_DURATION_S)
-            hook, hashtags = generate_caption(transcript, cand.title, lang=market)
+            # Hooks récents du même marché : on force Gemini à s'en démarquer.
+            recent = [p.get("hook", "") for p in state.published if p.get("market") == market][-15:]
+            hook, hashtags = generate_caption(
+                transcript, cand.title, lang=market, creator=cand.creator, avoid=recent
+            )
             moments = [ViralMoment(start=0.0, end=end, score=cand.score, hook=hook, hashtags=hashtags)]
         else:
             if not transcript.segments:
@@ -129,20 +144,32 @@ def _process_source(
             # id interne (ascii, stable) pour les fichiers intermédiaires
             base = f"{cand.platform.value}_{cand.source_id}_{int(m.start)}"
             raw_clip = settings.CLIPS_DIR / f"{base}.mp4"
-            # nom FINAL lisible : slug du hook + court id source (point 4)
-            pretty = f"{_slugify(m.hook or cand.title)}_{cand.source_id[:6]}"
+            # nom FINAL lisible : slug du hook + court id source (fin de l'id :
+            # le début vaut "clip_0" pour tous les clips Kick)
+            short_id = re.sub(r"\W", "", cand.source_id)[-6:]
+            pretty = f"{_slugify(m.hook or cand.title)}_{short_id}"
             final_clip = settings.CLIPS_DIR / f"{pretty}.mp4"
 
             try:
                 make_vertical_clip(dl.path, local_start, local_end, raw_clip)
+                # Sous-titres mot-à-mot en ASS ; le titre, lui, est une image
+                # au rendu natif TikTok, placée selon le cadrage obtenu.
                 ass = build_ass(
                     words,
                     settings.SUBS_DIR / f"{base}.ass",
                     clip_offset=m.start,
-                    title=m.hook,                       # titre fixe en haut
+                    title=None,
                     clip_duration=local_end - local_start,
                 )
-                burn_subtitles(raw_clip, ass, final_clip)
+                title_png, title_y = None, None
+                if settings.TITLE_ENABLE and m.hook:
+                    title_png = render_title(m.hook, settings.SUBS_DIR / f"{base}_title.png")
+                    from PIL import Image
+
+                    with Image.open(title_png) as _t:
+                        title_h = _t.height
+                    title_y = title_center_y(clip_mod.LAST_MODE, title_h, clip_mod.LAST_FACE_OUT)
+                burn_subtitles(raw_clip, ass, final_clip, title_png=title_png, title_center_y=title_y)
             except Exception as exc:  # noqa: BLE001 - un moment raté n'annule pas les autres
                 log.error("  Montage échoué (%s @%.0f) : %s", cand.uid, m.start, exc)
                 continue

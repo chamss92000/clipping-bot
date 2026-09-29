@@ -218,7 +218,8 @@ def _sanitize(raw_moments: list, duration: float) -> list[ViralMoment]:
 
 
 _CAPTION_PROMPT = """Tu es un TOP clippeur (des millions de vues sur TikTok/Shorts).
-Voici un clip déjà populaire (titre d'origine : "{title}"). Sa transcription :
+Voici un clip déjà populaire du streamer "{creator}" (titre d'origine : "{title}").
+Sa transcription :
 
 {transcript}
 
@@ -234,17 +235,26 @@ Exemple : le clip dit "je quitte NoPixel" -> hook "Il quitte NoPixel pour de bon
 
 Le hook doit aussi :
 - être en {lang_name} ({lang_instr})
-- faire 3 à 8 mots MAX (il s'affiche en gros à l'écran, il doit tenir)
-- créer un MANQUE / de la curiosité (ce qu'on appelle un "curiosity gap") :
-  question, cliffhanger, chiffre choc, promesse, réaction ("il n'aurait jamais dû…")
-- NE PAS spoiler la chute, NE PAS être une description plate du contenu
-- pas de guillemets, pas de ponctuation finale, pas d'emoji dans le hook
+- faire 4 à 7 mots (court = plus percutant ET affiché plus gros à l'écran)
+- être SPÉCIFIQUE à CE clip : cite un élément concret (l'objet, le jeu, la
+  situation, la personne, le chiffre…). Un hook qui marcherait pour n'importe
+  quel clip est un MAUVAIS hook.
+- créer un MANQUE / de la curiosité ("curiosity gap") sans spoiler la chute
+- pas de guillemets, pas de ponctuation finale, pas d'emoji
 
-Exemples de bons hooks : "Il mise TOUT sur un dernier coup", "La pire idée de sa vie",
-"Personne ne s'attendait à ça", "Il quitte tout du jour au lendemain".
+VARIE LA FORMULE. Choisis celle qui colle le mieux au clip parmi (entre autres) :
+  POV ("POV : …") · question intrigante · "Quand …" · chiffre/stat concret ·
+  réaction ("Sa tête quand …") · contraste ("Il pensait que … ") ·
+  interpellation ("Attendez la fin") · le pseudo du streamer + la situation.
+INTERDIT : commencer par "Le/La pire", "Worst", "Best", "Le/La meilleur(e)", et
+les superlatifs creux ("de sa vie", "de l'histoire", "ever") sauf si c'est
+littéralement le cœur du clip.
 
-`hashtags` : 3 à 5, pertinents et populaires (dont 1-2 génériques type #tiktok #viral
-ou #fyp adaptés à la langue).
+Hooks déjà utilisés récemment — ne reprends NI leur structure NI leurs premiers mots :
+{avoid}
+
+`hashtags` : 3 à 5, NICHE avant tout : le pseudo du streamer (#{creator_tag}), le jeu
+ou le sujet, puis 1 générique (#fyp ou équivalent). Pas de liste de tags génériques.
 Réponds UNIQUEMENT en JSON : {{"hook": "...", "hashtags": ["#..", "#.."]}}"""
 
 
@@ -288,18 +298,27 @@ def _lang_bits(lang: str | None) -> tuple[str, str]:
 
 
 def generate_caption(
-    transcript: Transcript, fallback_title: str = "", lang: str | None = None
+    transcript: Transcript,
+    fallback_title: str = "",
+    lang: str | None = None,
+    creator: str = "",
+    avoid: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Génère (hook, hashtags) pour un clip déjà viral. 1 appel Gemini, avec
     repli sur le titre d'origine en cas d'échec. `lang` force la langue du hook
-    ("fr"/"en"/"intl") pour coller au marché ciblé."""
+    ("fr"/"en"/"intl") ; `avoid` = hooks récents dont il faut se démarquer
+    (évite l'effet "template" répétitif que l'algo et les viewers repèrent)."""
     text = transcript.full_text[:2000] if transcript.segments else ""
     if not text and not fallback_title:
         return ("", [])
     lang_name, lang_instr = _lang_bits(lang)
+    avoid_txt = "\n".join(f"- {h}" for h in (avoid or [])[-15:] if h) or "(aucun)"
     prompt = _CAPTION_PROMPT.format(
         title=fallback_title[:150], transcript=text or "(pas de dialogue)",
         lang_name=lang_name, lang_instr=lang_instr,
+        creator=creator or "inconnu",
+        creator_tag=re.sub(r"\W", "", creator.lower()) or "streamer",
+        avoid=avoid_txt,
     )
     try:
         raw = _call_gemini(prompt).strip()

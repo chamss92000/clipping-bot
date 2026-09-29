@@ -50,11 +50,16 @@ narration of about {words} words). Rules:
 Also give {n_scenes} SHORT visual prompts ("scenes") for an AI image generator,
 one per beat. {style_hint} Each scene = a vivid image description, NO text in image.
 
+Also give {n_scenes} SHORT stock-footage search queries ("stock_queries"),
+2-3 words each, matching the scenes (e.g. "luxury car night", "city skyline",
+"typing laptop dark"). These are for searching a stock video library.
+
 Return ONLY valid JSON, no text around:
 {{"hook":"<3 to 6 word on-screen title, uppercase-friendly>",
   "narration":"<the full spoken script, one flowing text>",
   "hashtags":["#tag1","#tag2","#tag3","#tag4"],
   "scenes":["<image prompt 1>","<image prompt 2>", "..."],
+  "stock_queries":["<2-3 word query>", "<2-3 word query>", "..."],
   "bg_keywords":"<2-3 words to search stock b-roll, e.g. 'laptop desk work'>"}}"""
 
 
@@ -84,15 +89,18 @@ def generate_script(topic: str | None = None, words: int | None = None) -> dict:
     if isinstance(hashtags, str):
         hashtags = hashtags.split()
     hashtags = [h if h.startswith("#") else f"#{h}" for h in hashtags][:8]
-    scenes = data.get("scenes") or []
-    if isinstance(scenes, str):
-        scenes = [scenes]
-    scenes = [str(s).strip() for s in scenes if str(s).strip()]
+    def _clean_list(key):
+        v = data.get(key) or []
+        if isinstance(v, str):
+            v = [v]
+        return [str(s).strip() for s in v if str(s).strip()]
+
     return {
         "hook": str(data.get("hook", "")).strip()[:80] or topic[:40],
         "narration": narration,
         "hashtags": hashtags,
-        "scenes": scenes,
+        "scenes": _clean_list("scenes"),
+        "stock_queries": _clean_list("stock_queries"),
         "bg_keywords": str(data.get("bg_keywords", "") or "technology background").strip(),
     }
 
@@ -256,46 +264,72 @@ def _gradient_bg(duration: float, out: Path) -> Path:
     return out
 
 
-def _pexels_bg(duration: float, keywords: str, out: Path, td: Path) -> Path | None:
-    """Montage de plusieurs b-rolls verticaux libres de droits (Pexels). None si KO."""
+def _pexels_pick(video: dict) -> tuple[str | None, int]:
+    """Meilleur fichier d'une vidéo Pexels : portrait + haute résolution."""
+    best, best_h, best_score = None, 0, -1
+    for f in video.get("video_files", []):
+        w, h = f.get("width") or 0, f.get("height") or 0
+        if h < 900:
+            continue
+        portrait = h >= w
+        score = (3 if portrait else 0) + (2 if 1080 <= h <= 1920 else 1)
+        if score > best_score:
+            best_score, best, best_h = score, f.get("link"), h
+    return best, best_h
+
+
+def _pexels_bg(duration: float, queries: list[str], out: Path, td: Path) -> Path | None:
+    """Montage b-roll : UN extrait Pexels par scène du script (footage pertinent
+    + coupes fréquentes = plus dynamique/travaillé). None si KO."""
     if not settings.PEXELS_API_KEY:
         return None
     import requests
 
+    qs = [q for q in (queries or []) if q][:6] or ["cinematic background"]
+    downloaded: list[Path] = []
+    seen: set = set()
     try:
-        r = requests.get(
-            "https://api.pexels.com/videos/search",
-            headers={"Authorization": settings.PEXELS_API_KEY},
-            params={"query": keywords, "orientation": "portrait", "per_page": 15, "size": "medium"},
-            timeout=settings.HTTP_TIMEOUT,
-        )
-        r.raise_for_status()
-        # 1 lien portrait par vidéo (clips DISTINCTS => montage varié)
-        links: list[str] = []
-        for v in r.json().get("videos", []):
-            best, best_h = None, 0
-            for f in v.get("video_files", []):
-                w, h = f.get("width") or 0, f.get("height") or 0
-                if h > w and h >= 1000 and h > best_h:
-                    best_h, best = h, f.get("link")
-            if best:
-                links.append(best)
-        if not links:
-            return None
+        for q in qs:
+            try:
+                r = requests.get(
+                    "https://api.pexels.com/videos/search",
+                    headers={"Authorization": settings.PEXELS_API_KEY},
+                    params={"query": q, "orientation": "portrait", "per_page": 8, "size": "large"},
+                    timeout=settings.HTTP_TIMEOUT,
+                )
+                r.raise_for_status()
+                vids = r.json().get("videos", [])
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Pexels: requête '%s' KO : %s", q, exc)
+                continue
+            link = None
+            for v in vids:
+                if v.get("id") in seen:
+                    continue
+                link, _ = _pexels_pick(v)
+                if link:
+                    seen.add(v.get("id"))
+                    break
+            if not link:
+                continue
+            raw = td / f"px_{len(downloaded)}.mp4"
+            try:
+                with requests.get(link, stream=True, timeout=90) as dl:
+                    dl.raise_for_status()
+                    with open(raw, "wb") as fh:
+                        for chunk in dl.iter_content(1 << 20):
+                            fh.write(chunk)
+                downloaded.append(raw)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Pexels: download KO : %s", exc)
 
-        n = max(2, min(4, round(duration / 12)))
-        links = links[:n]
-        seg = duration / len(links)
+        if not downloaded:
+            return None
+        seg = duration / len(downloaded)
         vf = (f"scale={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-              f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},eq=brightness=-0.06,setsar=1{_grade_suffix()}")
+              f"crop={settings.OUTPUT_WIDTH}:{settings.OUTPUT_HEIGHT},eq=brightness=-0.04,setsar=1{_grade_suffix()}")
         seg_files: list[Path] = []
-        for i, link in enumerate(links):
-            raw = td / f"px_{i}.mp4"
-            with requests.get(link, stream=True, timeout=90) as dl:
-                dl.raise_for_status()
-                with open(raw, "wb") as fh:
-                    for chunk in dl.iter_content(1 << 20):
-                        fh.write(chunk)
+        for i, raw in enumerate(downloaded):
             clip = td / f"pxseg_{i}.mp4"
             proc = subprocess.run(
                 [settings.FFMPEG_BIN, "-y", "-loglevel", "error",
@@ -304,7 +338,6 @@ def _pexels_bg(duration: float, keywords: str, out: Path, td: Path) -> Path | No
                  "-pix_fmt", "yuv420p", str(clip)],
                 capture_output=True, text=True,
             )
-            raw.unlink(missing_ok=True)
             if proc.returncode == 0:
                 seg_files.append(clip)
         if not seg_files:
@@ -318,7 +351,7 @@ def _pexels_bg(duration: float, keywords: str, out: Path, td: Path) -> Path | No
         )
         if proc.returncode != 0:
             return None
-        log.info("Faceless: b-roll Pexels (%d extraits)", len(seg_files))
+        log.info("Faceless: b-roll Pexels (%d extraits, 1 par scène)", len(seg_files))
         return out
     except Exception as exc:  # noqa: BLE001 - repli sur l'IA / dégradé
         log.warning("Pexels indisponible (%s) — repli.", exc)
@@ -345,7 +378,8 @@ def make_faceless_video(out_path: str | Path, script: dict | None = None) -> dic
         # sinon images IA (Pollinations, gratuit) ; dégradé animé en dernier recours.
         bg = None
         if settings.PEXELS_API_KEY:
-            bg = _pexels_bg(dur, script["bg_keywords"], tdp / "bg.mp4", tdp)
+            queries = script.get("stock_queries") or [script["bg_keywords"]]
+            bg = _pexels_bg(dur, queries, tdp / "bg.mp4", tdp)
             if not bg:
                 bg = _ai_slideshow_bg(dur, script.get("scenes") or [], tdp / "bg.mp4", tdp)
         else:

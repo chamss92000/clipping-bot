@@ -2,8 +2,7 @@ name: cute-clips
 
 # Clips cute/animaux/satisfying (Pexels) pour l'audience thaï/asie. Cron dédié.
 on:
-  schedule:
-    - cron: "15 6,14,22 * * *"   # 3x/jour
+  # EN PAUSE (plus de cron) : stock Pexels = contenu non original, ~2 clips/2 semaines. Lançable à la main.
   workflow_dispatch:
     inputs:
       dry_run:

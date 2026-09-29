@@ -2,8 +2,7 @@ name: asia-clips
 
 # Clips Twitch de la communauté thaï (public thaï). Cron dédié.
 on:
-  schedule:
-    - cron: "45 5,17 * * *"
+  # EN PAUSE (plus de cron) : Twitch-th = surtout des retransmissions d'esport, ~2 clips/semaine. Lançable à la main.
   workflow_dispatch:
     inputs:
       dry_run:

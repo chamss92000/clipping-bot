@@ -42,7 +42,8 @@ def run() -> int:
     # Seuil de vues par clip adapté aux streamers thaï (plus petits).
     settings.TWITCH_CLIP_MIN_VIEWS = settings.ASIA_CLIP_MIN_VIEWS
     clips = twitch.detect_clips(
-        min_viewers=settings.ASIA_MIN_VIEWERS, languages=settings.ASIA_LANGUAGES
+        min_viewers=settings.ASIA_MIN_VIEWERS, languages=settings.ASIA_LANGUAGES,
+        include_targets=False,
     )
     if not clips:
         log.warning("Asie: aucun clip détecté.")

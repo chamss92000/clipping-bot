@@ -104,15 +104,15 @@ MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 80)
 MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
 #: Nombre max de sources ESSAYÉES par cycle : si une source échoue (blocage
 #: anti-bot, VOD indisponible…), on passe à la suivante au lieu d'arrêter.
-MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 12)
+MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 16)
 #: Une source n'est définitivement abandonnée qu'après ce nombre d'échecs.
 MAX_SOURCE_FAILURES: int = _get_int("MAX_SOURCE_FAILURES", 3)
 #: Nombre max de clips produits/publiés par cycle (toutes chaînes confondues).
-MAX_CLIPS_PER_RUN: int = _get_int("MAX_CLIPS_PER_RUN", 4)
+MAX_CLIPS_PER_RUN: int = _get_int("MAX_CLIPS_PER_RUN", 6)
 #: Objectif de clips PAR MARCHÉ (fr / intl). Chaque chaîne a sa place réservée,
 #: indépendamment du classement (sinon les clips EN raflent tout et le FR ne
 #: sort jamais). Total réel = CLIPS_PER_MARKET × nombre de marchés actifs.
-CLIPS_PER_MARKET: int = _get_int("CLIPS_PER_MARKET", 2)
+CLIPS_PER_MARKET: int = _get_int("CLIPS_PER_MARKET", 3)
 #: Fuseau utilisé pour la planification des publications.
 TIMEZONE: str = _get("TIMEZONE", "Europe/Paris")
 
@@ -165,7 +165,7 @@ RELAX_DRIVE_FOLDER_NAME: str = _get("RELAX_DRIVE_FOLDER_NAME", "clipping-bot-rel
 RELAX_PER_RUN: int = _get_int("RELAX_PER_RUN", 2)
 
 # --- Contenu faceless "valeur" (niche argent/IA) : voix off IA + sous-titres ---
-FACELESS_ENABLE: bool = _get_bool("FACELESS_ENABLE", True)
+FACELESS_ENABLE: bool = _get_bool("FACELESS_ENABLE", False)  # coupé : 0 vue
 FACELESS_DRIVE_FOLDER_NAME: str = _get("FACELESS_DRIVE_FOLDER_NAME", "clipping-bot-ai")
 FACELESS_PER_RUN: int = _get_int("FACELESS_PER_RUN", 2)
 #: Sujet/niche de la chaîne (pilote la génération de script).
@@ -278,6 +278,14 @@ TWITCH_CLIP_MIN_VIEWS: int = _get_int("TWITCH_CLIP_MIN_VIEWS", 50)
 #: casse). GTA RP sature les tops streamers => exclu par défaut pour diversifier.
 #: Vide cette variable (TWITCH_GAME_BLACKLIST="") pour réautoriser tous les jeux.
 TWITCH_GAME_BLACKLIST: list[str] = _get_list("TWITCH_GAME_BLACKLIST", ["grand theft auto"])
+#: MODE CAMPAGNE (monétisation) : créateurs ciblés en priorité, même hors live.
+#: Beaucoup de streamers paient les clippeurs AU NOMBRE DE VUES (programmes
+#: "content rewards"/"clipping campaigns") : on vise alors UNIQUEMENT leurs clips.
+TARGET_STREAMERS_TWITCH: list[str] = _get_list("TARGET_STREAMERS_TWITCH", [])  # logins
+TARGET_CHANNELS_KICK: list[str] = _get_list("TARGET_CHANNELS_KICK", [])         # slugs
+#: True = on ne clippe QUE les créateurs ciblés (sinon : ciblés en priorité + tendances).
+TARGET_ONLY: bool = _get_bool("TARGET_ONLY", False)
+TARGET_SCORE_BOOST: float = _get_float("TARGET_SCORE_BOOST", 30.0)
 #: Diversité : nombre max de clips gardés PAR JEU dans la file finale (0 = illimité).
 TWITCH_MAX_CLIPS_PER_GAME: int = _get_int("TWITCH_MAX_CLIPS_PER_GAME", 3)
 TWITCH_MIN_VIEWERS: int = _get_int("TWITCH_MIN_VIEWERS", 3000)
@@ -430,6 +438,10 @@ CAM_ZOOM: float = _get_float("CAM_ZOOM", 4.2)
 #: Largeur mini de la zone facecam = fraction de la largeur source. Empêche un
 #: cadrage trop serré (donc trop "zoomé"/pixelisé) quand le visage est petit.
 CAM_MIN_WIDTH_FRAC: float = _get_float("CAM_MIN_WIDTH_FRAC", 0.45)
+#: Mode "fond flou" : hauteur occupée par la vidéo (fraction de l'écran). 0.32 =
+#: vidéo 16:9 entière mais minuscule ; 0.50 = on rogne un peu les bords pour une
+#: vidéo ~1,5x plus grande (bien plus regardable sur TikTok).
+BLUR_FG_HEIGHT_FRAC: float = _get_float("BLUR_FG_HEIGHT_FRAC", 0.50)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
 #: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
@@ -444,12 +456,12 @@ AUDIO_LOUDNORM_I: float = _get_float("AUDIO_LOUDNORM_I", -14.0)
 # CI. Anton = condensée très grasse, la police des captions virales.
 FONTS_DIR: Path = PROJECT_ROOT / "assets" / "fonts"
 SUB_FONT: str = _get("SUB_FONT", "Anton")
-SUB_FONT_SIZE: int = _get_int("SUB_FONT_SIZE", 92)  # gros = style TikTok
+SUB_FONT_SIZE: int = _get_int("SUB_FONT_SIZE", 100)  # gros = style TikTok
 SUB_PRIMARY_COLOR: str = _get("SUB_PRIMARY_COLOR", "&H00FFFFFF")  # blanc (ASS BGR)
 SUB_HIGHLIGHT_COLOR: str = _get("SUB_HIGHLIGHT_COLOR", "&H0000F0FF")  # jaune vif
 SUB_OUTLINE_COLOR: str = _get("SUB_OUTLINE_COLOR", "&H00000000")  # noir
 SUB_OUTLINE_WIDTH: int = _get_int("SUB_OUTLINE_WIDTH", 6)   # contour épais = lisible
-SUB_SHADOW: int = _get_int("SUB_SHADOW", 3)
+SUB_SHADOW: int = _get_int("SUB_SHADOW", 4)
 SUB_MARGIN_V: int = _get_int("SUB_MARGIN_V", 620)          # remonte le texte (zone safe TikTok)
 SUB_UPPERCASE: bool = _get_bool("SUB_UPPERCASE", True)     # MAJUSCULES = punch
 #: Retire la ponctuation en début/fin de chaque mot affiché (rendu plus propre).
@@ -458,10 +470,18 @@ SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 3)
 
 # Titre fixe (hook) affiché en haut du clip, toute la durée.
 TITLE_ENABLE: bool = _get_bool("TITLE_ENABLE", True)
-TITLE_FONT_SIZE: int = _get_int("TITLE_FONT_SIZE", 58)
-TITLE_MARGIN_V: int = _get_int("TITLE_MARGIN_V", 150)      # distance depuis le haut
-TITLE_UPPERCASE: bool = _get_bool("TITLE_UPPERCASE", False)
-TITLE_BOX: bool = _get_bool("TITLE_BOX", True)             # bandeau semi-opaque derrière
+TITLE_FONT_SIZE: int = _get_int("TITLE_FONT_SIZE", 88)     # gros titre d'accroche impact
+TITLE_MARGIN_V: int = _get_int("TITLE_MARGIN_V", 170)      # distance depuis le haut
+TITLE_UPPERCASE: bool = _get_bool("TITLE_UPPERCASE", True) # MAJUSCULES = punch
+TITLE_BOX: bool = _get_bool("TITLE_BOX", False)            # False = gros texte contour (style réf)
+#: Surligne en jaune les mots "punch" du titre (comme les captions virales).
+TITLE_HIGHLIGHT: bool = _get_bool("TITLE_HIGHLIGHT", True)
+#: Titre rendu en image (natif TikTok) au lieu du texte ASS : "box" (boîtes
+#: blanches arrondies, texte noir TikTok Sans — le look TikTok) | "outline".
+TITLE_STYLE: str = _get("TITLE_STYLE", "outline")
+TITLE_CARD_FONT_SIZE: int = _get_int("TITLE_CARD_FONT_SIZE", 90)
+#: Largeur max du texte du titre (fraction de la largeur vidéo).
+TITLE_CARD_MAX_WIDTH: float = _get_float("TITLE_CARD_MAX_WIDTH", 0.84)
 
 
 # ---------------------------------------------------------------------------
