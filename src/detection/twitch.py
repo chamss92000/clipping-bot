@@ -1,15 +1,15 @@
-"""Détection Twitch — top streamers puis leurs VODs récentes (archives).
+"""Détection Twitch — clips DÉJÀ viraux, par JEU (focus GTA 6).
 
-Pourquoi VODs et pas streams live : on ne peut clipper qu'un contenu
-téléchargeable. On identifie donc les streamers qui *cartonnent maintenant*
-(top live streams par viewers) puis on récupère leurs dernières VODs
-(`type=archive`), qui sont les rediffusions de leurs streams.
+Stratégie : on interroge directement l'API Clips par catégorie de jeu
+(`GET /helix/clips?game_id=…&started_at=…`). Twitch renvoie les clips triés par
+vues décroissantes, TOUS streamers confondus — bien plus ciblé que l'ancienne
+approche « top streamers live → leurs clips » (qui ramenait surtout du Just
+Chatting et ratait les petits streamers qui font LE clip du jour).
 
-Auth : OAuth2 client-credentials (app access token). Pas de compte utilisateur
-requis, le token est mis en cache en mémoire jusqu'à ~1 min avant expiration.
+Chaque clip est un moment sélectionné par la communauté, court (≤ 60 s),
+téléchargeable en CI et filtrable par langue.
 
-On utilise `requests` sur l'API Helix plutôt que `twitchio` : twitchio est
-orienté chat IRC/EventSub temps réel, inadapté à un simple polling REST.
+Auth : OAuth2 client-credentials (app access token), mis en cache en mémoire.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from src.models import Platform, VideoCandidate
 from src.utils.logging import get_logger
 from src.utils.retry import retry
 
+from .games import TrackedGame, match_game, tracked_games
+
 log = get_logger("detection.twitch")
 
 _HELIX = "https://api.twitch.tv/helix"
@@ -32,10 +34,6 @@ _OAUTH = "https://id.twitch.tv/oauth2/token"
 
 # Cache token en mémoire : (access_token, expiry_epoch)
 _token_cache: tuple[str, float] | None = None
-
-
-class TwitchError(RuntimeError):
-    pass
 
 
 @retry(exceptions=(requests.RequestException,))
@@ -64,7 +62,6 @@ def _get_token() -> str:
         raise settings.ConfigError("TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET manquant")
     token, expiry = _fetch_app_token()
     _token_cache = (token, expiry)
-    log.debug("Twitch: nouveau app access token obtenu")
     return token
 
 
@@ -78,80 +75,86 @@ def _headers() -> dict[str, str]:
 @retry(exceptions=(requests.RequestException,))
 def _helix_get(path: str, params: dict) -> dict:
     resp = requests.get(
-        f"{_HELIX}/{path}",
-        headers=_headers(),
-        params=params,
-        timeout=settings.HTTP_TIMEOUT,
+        f"{_HELIX}/{path}", headers=_headers(), params=params, timeout=settings.HTTP_TIMEOUT
     )
-    # 401 => token périmé/révoqué : on purge le cache et on laisse le retry rejouer.
-    if resp.status_code == 401:
+    if resp.status_code == 401:  # token périmé/révoqué : purge + retry
         global _token_cache
         _token_cache = None
-        resp.raise_for_status()
     resp.raise_for_status()
     return resp.json()
 
 
-def _top_streams(min_viewers: int, limit: int, languages: list[str]) -> list[dict]:
-    """Streams live triés par viewers (Helix les renvoie déjà décroissants)."""
-    collected: list[dict] = []
-    cursor: str | None = None
-    langs = set(languages)
-    # On pagine jusqu'à avoir assez de streams au-dessus du seuil.
-    while len(collected) < limit:
-        params: dict = {"first": 100}
-        # On demande directement les langues à l'API : indispensable pour les
-        # langues "petites" (ex. thaï) qui ne remontent pas dans le top global.
-        if langs:
-            params["language"] = list(langs)
-        if cursor:
-            params["after"] = cursor
-        data = _helix_get("streams", params)
-        page = data.get("data", [])
-        if not page:
-            break
-        for s in page:
-            if s.get("viewer_count", 0) < min_viewers:
-                # liste triée décroissante => tout ce qui suit est sous le seuil
-                return collected
-            if langs and s.get("language") not in langs:
-                continue
-            collected.append(s)
-            if len(collected) >= limit:
+# ---------------------------------------------------------------------------
+# Jeux
+# ---------------------------------------------------------------------------
+def _resolve_games(games: list[TrackedGame]) -> dict[str, TrackedGame]:
+    """{game_id: TrackedGame}. Nom exact via /games, sinon /search/categories."""
+    out: dict[str, TrackedGame] = {}
+    if not games:
+        return out
+    try:
+        data = _helix_get("games", {"name": [g.info.name for g in games]})
+        for row in data.get("data", []):
+            g = match_game(row.get("name"))
+            if g:
+                out[str(row["id"])] = g
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Twitch: résolution /games échouée : %s", exc)
+
+    found = {g.info.name for g in out.values()}
+    for g in games:
+        if g.info.name in found:
+            continue
+        # Nom pas exact (ou catégorie renommée) : recherche puis alias.
+        try:
+            rows = _helix_get("search/categories", {"query": g.info.name, "first": 10}).get("data", [])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Twitch: recherche de catégorie '%s' échouée : %s", g.info.name, exc)
+            continue
+        for row in rows:
+            if match_game(row.get("name")) is g or (row.get("name") or "").lower() == g.info.name.lower():
+                out[str(row["id"])] = g
                 break
-        cursor = data.get("pagination", {}).get("cursor")
-        if not cursor:
-            break
-    return collected
+        else:
+            log.warning("Twitch: catégorie introuvable pour '%s' (vérifie le nom exact).", g.info.name)
+    return out
 
 
-def _games_map(game_ids: list[str]) -> dict[str, str]:
-    """Résout {game_id: game_name} via Helix /games (batch de 100 max)."""
-    ids = [g for g in {gid for gid in game_ids if gid}]
+def _games_names(game_ids: list[str]) -> dict[str, str]:
+    """{game_id: nom} pour des ids arbitraires (clips de créateurs ciblés)."""
+    ids = sorted({g for g in game_ids if g})
     out: dict[str, str] = {}
     for i in range(0, len(ids), 100):
-        batch = ids[i : i + 100]
         try:
-            data = _helix_get("games", {"id": batch})  # requests répète ?id=.. pour chaque
-        except Exception as exc:  # noqa: BLE001 - pas de nom => on ne filtre juste pas
-            log.debug("Twitch: résolution des jeux échouée : %s", exc)
+            data = _helix_get("games", {"id": ids[i : i + 100]})
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Twitch: noms de jeux indisponibles : %s", exc)
             continue
         for g in data.get("data", []):
             out[str(g.get("id"))] = g.get("name", "")
     return out
 
 
-def _recent_clips(user_id: str, count: int, started_at: str) -> list[dict]:
-    """Top clips (triés par vues) d'un streamer depuis `started_at` (RFC3339)."""
-    data = _helix_get(
-        "clips",
-        {"broadcaster_id": user_id, "first": min(count, 100), "started_at": started_at},
-    )
-    return data.get("data", [])
+# ---------------------------------------------------------------------------
+# Clips
+# ---------------------------------------------------------------------------
+def _paged_clips(params: dict, pages: int) -> list[dict]:
+    out: list[dict] = []
+    cursor = None
+    for _ in range(max(1, pages)):
+        p = dict(params, first=100)
+        if cursor:
+            p["after"] = cursor
+        data = _helix_get("clips", p)
+        out.extend(data.get("data", []))
+        cursor = (data.get("pagination") or {}).get("cursor")
+        if not cursor:
+            break
+    return out
 
 
-def _clip_trend_score(views: int, created_at: str | None) -> float:
-    """Score 0-100 basé sur la vélocité (vues/heure) du clip."""
+def clip_trend_score(views: int, created_at: str | None) -> float:
+    """Score 0-100 : vélocité (vues/heure) + petit bonus volume. Commun Twitch/Kick."""
     age_h = 24.0
     if created_at:
         try:
@@ -163,13 +166,15 @@ def _clip_trend_score(views: int, created_at: str | None) -> float:
     return round(min(100.0, 20.0 * math.log10(vph + 1.0) + math.log10(max(views, 1))), 2)
 
 
-def _clip_to_candidate(clip: dict) -> VideoCandidate | None:
-    cid = clip.get("id")
-    url = clip.get("url")
+def _clip_to_candidate(clip: dict, game_name: str, game: TrackedGame | None) -> VideoCandidate | None:
+    cid, url = clip.get("id"), clip.get("url")
     if not cid or not url:
         return None
     views = int(clip.get("view_count", 0))
-    duration = int(round(float(clip.get("duration", 0) or 0)))
+    duration = float(clip.get("duration", 0) or 0)
+    score = clip_trend_score(views, clip.get("created_at"))
+    if game and game.primary:
+        score += settings.PRIMARY_GAME_BOOST
     return VideoCandidate(
         platform=Platform.TWITCH,
         source_id=str(cid),
@@ -177,239 +182,136 @@ def _clip_to_candidate(clip: dict) -> VideoCandidate | None:
         title=clip.get("title", "") or "",
         creator=clip.get("broadcaster_name", "") or "",
         views=views,
-        duration_s=duration or None,
+        duration_s=int(round(duration)) or None,
         published_at=clip.get("created_at"),
         thumbnail=clip.get("thumbnail_url"),
-        score=_clip_trend_score(views, clip.get("created_at")),
+        score=round(score, 2),
         extra={
-            "is_clip": True,  # <-- le clip EST déjà le moment viral
+            "is_clip": True,
             "language": clip.get("language"),
             "game_id": clip.get("game_id"),
+            "game_name": game_name,
+            "primary_game": bool(game and game.primary),
             "creator_name": clip.get("creator_name"),
+            # Pour repérer un même moment clippé par plusieurs viewers.
+            "video_id": clip.get("video_id") or "",
+            "vod_offset": clip.get("vod_offset"),
         },
     )
 
 
-def detect_clips(
-    min_viewers: int | None = None,
-    top_streams: int | None = None,
-    clips_per: int | None = None,
-    languages: list[str] | None = None,
-    include_targets: bool = True,
-) -> list[VideoCandidate]:
-    """Détecte les clips Twitch DÉJÀ viraux (API Clips) chez les streamers chauds.
+def _drop_reason(clip: dict, langs: set[str], min_views: int) -> str | None:
+    if langs and clip.get("language") not in langs:
+        return "langue"
+    if float(clip.get("duration", 0) or 0) < settings.SOURCE_CLIP_MIN_S:
+        return "durée"
+    if int(clip.get("view_count", 0)) < min_views:
+        return "vues"
+    return None
 
-    Bien supérieur au clipping de VODs : chaque clip est un moment sélectionné
-    par la communauté, court, téléchargeable, et filtrable par langue.
-    Mode campagne : les créateurs de TARGET_STREAMERS_TWITCH passent en priorité
-    (même hors live) ; avec TARGET_ONLY, ce sont les SEULS clippés.
+
+def select_clips(clips: list[dict], langs: set[str]) -> tuple[list[dict], int, dict[str, int]]:
+    """Filtre les clips d'un jeu avec un seuil de vues ADAPTATIF.
+
+    On part de TWITCH_CLIP_MIN_VIEWS ; si une langue n'a pas assez de clips
+    (jeu pas encore sorti, heure creuse, petit marché FR), on divise le seuil
+    par 3 jusqu'au plancher — mieux vaut laisser le LLM juger un clip à 40 vues
+    que ne rien publier. Retourne (gardés, seuil appliqué, raisons de rejet).
     """
-    min_viewers = min_viewers if min_viewers is not None else settings.TWITCH_MIN_VIEWERS
-    top_streams = top_streams or settings.TWITCH_TOP_STREAMS
-    clips_per = clips_per or settings.TWITCH_CLIPS_PER_STREAMER
-    languages = languages if languages is not None else settings.TWITCH_LANGUAGES
-    langs = set(languages)
-    targets = [t.lower() for t in settings.TARGET_STREAMERS_TWITCH] if include_targets else []
+    need = settings.TWITCH_MIN_POOL_PER_LANG
+    min_views = settings.TWITCH_CLIP_MIN_VIEWS
+    floor = min(settings.TWITCH_CLIP_FLOOR_VIEWS, min_views)
+    while True:
+        kept, reasons = [], {}
+        for c in clips:
+            r = _drop_reason(c, langs, min_views)
+            if r:
+                reasons[r] = reasons.get(r, 0) + 1
+            else:
+                kept.append(c)
+        per_lang = {l: sum(1 for c in kept if c.get("language") == l) for l in (langs or {"*"})}
+        enough = all(n >= need for n in per_lang.values()) if langs else len(kept) >= need
+        if enough or min_views <= floor:
+            return kept, min_views, reasons
+        min_views = max(floor, min_views // 3)
 
-    if settings.TARGET_ONLY and targets:
-        streams = []
-        log.info("Twitch: mode campagne — uniquement %s", ", ".join(targets))
-    else:
-        try:
-            streams = _top_streams(min_viewers, top_streams, languages)
-        except Exception as exc:  # noqa: BLE001
-            log.error("Twitch: échec récupération top streams : %s", exc)
-            streams = []
-        log.info("Twitch: %d streamers chauds, recherche de leurs clips…", len(streams))
 
+def detect() -> list[VideoCandidate]:
+    """Clips viraux des jeux suivis (+ créateurs ciblés en mode campagne)."""
+    langs = set(settings.TWITCH_LANGUAGES)
     started_at = (
         datetime.now(timezone.utc) - timedelta(days=settings.TWITCH_CLIPS_DAYS)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
-
     candidates: dict[str, VideoCandidate] = {}
-    for stream in streams:
-        uid = stream.get("user_id")
-        if not uid:
-            continue
-        try:
-            clips = _recent_clips(uid, clips_per, started_at)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Twitch: clips indisponibles pour %s : %s", stream.get("user_name"), exc)
-            continue
-        for clip in clips:
-            if langs and clip.get("language") not in langs:
-                continue
-            if int(clip.get("view_count", 0)) < settings.TWITCH_CLIP_MIN_VIEWS:
-                continue
-            cand = _clip_to_candidate(clip)
-            if cand and cand.uid not in candidates:
-                candidates[cand.uid] = cand
 
-    # --- Créateurs ciblés (campagnes payées à la vue) : prioritaires, hors live ---
+    # --- 1) Clips par jeu ---------------------------------------------------
+    if not (settings.TARGET_ONLY and settings.TARGET_STREAMERS_TWITCH):
+        games = _resolve_games(tracked_games())
+        for game_id, g in games.items():
+            try:
+                clips = _paged_clips(
+                    {"game_id": game_id, "started_at": started_at}, settings.TWITCH_CLIPS_PAGES
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error("Twitch: clips de '%s' indisponibles : %s", g.info.name, exc)
+                continue
+            selected, min_views, reasons = select_clips(clips, langs)
+            kept = 0
+            for clip in selected:
+                cand = _clip_to_candidate(clip, g.info.name, g)
+                if cand and cand.uid not in candidates:
+                    candidates[cand.uid] = cand
+                    kept += 1
+            lang_hist: dict[str, int] = {}
+            for clip in clips:
+                lang_hist[clip.get("language") or "?"] = lang_hist.get(clip.get("language") or "?", 0) + 1
+            top_langs = sorted(lang_hist.items(), key=lambda kv: -kv[1])[:6]
+            views = sorted((int(c.get("view_count", 0)) for c in clips), reverse=True)
+            log.info(
+                "Twitch: %s%s — %d clips lus, %d retenus (seuil %d vues) | rejets %s | langues %s | "
+                "vues max/médiane/min %s/%s/%s",
+                g.info.name, " [prioritaire]" if g.primary else "", len(clips), kept, min_views,
+                reasons or "aucun", top_langs,
+                views[0] if views else 0, views[len(views) // 2] if views else 0,
+                views[-1] if views else 0,
+            )
+
+    # --- 2) Créateurs ciblés (campagnes payées à la vue) ---------------------
+    targets = [t.lower() for t in settings.TARGET_STREAMERS_TWITCH]
     if targets:
         try:
             users = _helix_get("users", {"login": targets}).get("data", [])
         except Exception as exc:  # noqa: BLE001
             log.warning("Twitch: créateurs ciblés introuvables : %s", exc)
             users = []
+        raw: list[dict] = []
         for u in users:
             try:
-                clips = _recent_clips(u["id"], max(clips_per, 20), started_at)
+                raw.extend(_paged_clips({"broadcaster_id": u["id"], "started_at": started_at}, 1))
             except Exception as exc:  # noqa: BLE001
                 log.warning("Twitch: clips de %s indisponibles : %s", u.get("login"), exc)
+        names = _games_names([c.get("game_id") for c in raw])
+        for clip in raw:
+            if int(clip.get("view_count", 0)) < settings.TWITCH_CLIP_MIN_VIEWS:
                 continue
-            for clip in clips:
-                if int(clip.get("view_count", 0)) < settings.TWITCH_CLIP_MIN_VIEWS:
-                    continue
-                cand = _clip_to_candidate(clip)
-                if cand:
-                    cand.score = round(cand.score + settings.TARGET_SCORE_BOOST, 2)
-                    cand.extra["target"] = True
-                    candidates[cand.uid] = cand
+            gname = names.get(str(clip.get("game_id")), "")
+            g = match_game(gname)
+            if not g and not settings.TARGET_ANY_GAME:
+                continue  # hors des jeux suivis
+            cand = _clip_to_candidate(clip, gname, g)
+            if cand:
+                cand.score = round(cand.score + settings.TARGET_SCORE_BOOST, 2)
+                cand.extra["target"] = True
+                candidates[cand.uid] = cand
         log.info("Twitch: %d créateur(s) ciblé(s) scanné(s)", len(users))
 
     result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
-
-    # --- Nom du jeu : filtre catégorie (ex. GTA RP) + diversité par jeu ---
-    games = _games_map([c.extra.get("game_id") for c in result])
-    blacklist = [b.lower() for b in settings.TWITCH_GAME_BLACKLIST]
-    per_game_cap = settings.TWITCH_MAX_CLIPS_PER_GAME
-    filtered: list[VideoCandidate] = []
-    per_game: dict[str, int] = {}
-    dropped_game = 0
-    for c in result:
-        name = games.get(str(c.extra.get("game_id")), "")
-        c.extra["game_name"] = name
-        if c.extra.get("target"):  # campagne : on clippe ce que fait le créateur, quel que soit le jeu
-            filtered.append(c)
-            continue
-        low = name.lower()
-        if any(b in low for b in blacklist):
-            dropped_game += 1
-            continue
-        if per_game_cap and name:
-            if per_game.get(name, 0) >= per_game_cap:
-                continue
-            per_game[name] = per_game.get(name, 0) + 1
-        filtered.append(c)
-
-    if dropped_game:
-        log.info("Twitch: %d clip(s) écarté(s) par le filtre de jeu (%s)",
-                 dropped_game, ", ".join(settings.TWITCH_GAME_BLACKLIST))
-    log.info("Twitch: %d clips viraux candidats", len(filtered))
-    return filtered
-
-
-def _recent_vods(user_id: str, count: int) -> list[dict]:
-    data = _helix_get(
-        "videos",
-        {"user_id": user_id, "type": "archive", "sort": "time", "first": min(count, 100)},
-    )
-    return data.get("data", [])
-
-
-def _parse_twitch_duration(s: str) -> int:
-    """'1h2m3s' / '45m10s' / '30s' -> secondes."""
-    total, num = 0, ""
-    units = {"h": 3600, "m": 60, "s": 1}
-    for ch in s:
-        if ch.isdigit():
-            num += ch
-        elif ch in units and num:
-            total += int(num) * units[ch]
-            num = ""
-    return total
-
-
-def _vod_to_candidate(vod: dict, stream_ctx: dict) -> VideoCandidate | None:
-    duration = _parse_twitch_duration(vod.get("duration", ""))
-    if duration < settings.TWITCH_MIN_VOD_DURATION_S:
-        return None
-    views = int(vod.get("view_count", 0))
-    live_viewers = int(stream_ctx.get("viewer_count", 0))
-    # Score de tendance 0-100, MÊME ÉCHELLE que YouTube (sinon une plateforme
-    # gagne toujours) : l'audience live actuelle est le signal de "chaud".
-    score = min(100.0, 20.0 * math.log10(live_viewers + 1.0))
-    score += min(6.0, math.log10(max(views, 1)))  # petit bonus notoriété du VOD
-    score = round(min(100.0, score), 2)
-
-    return VideoCandidate(
-        platform=Platform.TWITCH,
-        source_id=str(vod.get("id")),
-        url=vod.get("url", f"https://www.twitch.tv/videos/{vod.get('id')}"),
-        title=vod.get("title", ""),
-        creator=vod.get("user_name", stream_ctx.get("user_name", "")),
-        views=views,
-        duration_s=duration,
-        published_at=vod.get("created_at") or vod.get("published_at"),
-        thumbnail=(vod.get("thumbnail_url") or "").replace("%{width}", "640").replace("%{height}", "360"),
-        score=score,
-        extra={
-            "user_id": vod.get("user_id"),
-            "game_name": stream_ctx.get("game_name"),
-            "game_id": stream_ctx.get("game_id"),
-            "live_viewer_count": live_viewers,
-            "language": stream_ctx.get("language"),
-        },
-    )
-
-
-def detect(
-    min_viewers: int | None = None,
-    top_streams: int | None = None,
-    vods_per_streamer: int | None = None,
-    languages: list[str] | None = None,
-) -> list[VideoCandidate]:
-    """Point d'entrée Twitch. Par défaut => clips déjà viraux (bien meilleur).
-    `TWITCH_SOURCE=vods` bascule sur l'ancien échantillonnage de VODs."""
-    if settings.TWITCH_SOURCE == "clips":
-        return detect_clips(min_viewers, top_streams, None, languages)
-    return _detect_vods(min_viewers, top_streams, vods_per_streamer, languages)
-
-
-def _detect_vods(
-    min_viewers: int | None = None,
-    top_streams: int | None = None,
-    vods_per_streamer: int | None = None,
-    languages: list[str] | None = None,
-) -> list[VideoCandidate]:
-    """Ancien mode : VODs candidates issues des streamers les plus regardés."""
-    min_viewers = min_viewers if min_viewers is not None else settings.TWITCH_MIN_VIEWERS
-    top_streams = top_streams or settings.TWITCH_TOP_STREAMS
-    vods_per_streamer = vods_per_streamer or settings.TWITCH_VODS_PER_STREAMER
-    languages = languages if languages is not None else settings.TWITCH_LANGUAGES
-
-    try:
-        streams = _top_streams(min_viewers, top_streams, languages)
-    except Exception as exc:  # noqa: BLE001
-        log.error("Twitch: échec récupération top streams : %s", exc)
-        return []
-
-    log.info("Twitch: %d streams live au-dessus de %d viewers", len(streams), min_viewers)
-
-    candidates: dict[str, VideoCandidate] = {}
-    for stream in streams:
-        user_id = stream.get("user_id")
-        if not user_id:
-            continue
-        try:
-            vods = _recent_vods(user_id, vods_per_streamer)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Twitch: VODs indisponibles pour %s : %s", stream.get("user_name"), exc)
-            continue
-        for vod in vods:
-            cand = _vod_to_candidate(vod, stream)
-            if cand and cand.uid not in candidates:
-                candidates[cand.uid] = cand
-
-    result = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
-    log.info("Twitch: %d VODs candidates", len(result))
+    log.info("Twitch: %d clips candidats", len(result))
     return result
 
 
 if __name__ == "__main__":  # python -m src.detection.twitch
     settings.validate(["twitch"])
-    for c in detect()[:10]:
-        lv = c.extra.get("live_viewer_count")
-        print(f"[{c.score:6.2f}] live={lv} | {c.creator} — {c.title[:60]}")
-        print(f"          {c.url}  ({c.duration_s}s, game={c.extra.get('game_name')})")
+    for c in detect()[:15]:
+        print(f"[{c.score:6.2f}] {c.views:>7} vues | {c.extra.get('game_name')} | {c.creator} — {c.title[:60]}")
+        print(f"          {c.url}  ({c.duration_s}s, {c.extra.get('language')})")

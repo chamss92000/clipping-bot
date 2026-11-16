@@ -100,11 +100,9 @@ DRY_RUN: bool = _get_bool("DRY_RUN", False)
 #: Nombre max de candidats retenus par cycle (après agrégation/tri). Assez large
 #: pour que des sources FR (moins de vues que les gros clips EN) survivent au tri.
 MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 80)
-#: Nombre max de sources ayant RÉELLEMENT produit des clips par cycle.
-MAX_SOURCES_PER_RUN: int = _get_int("MAX_SOURCES_PER_RUN", 1)
-#: Nombre max de sources ESSAYÉES par cycle : si une source échoue (blocage
-#: anti-bot, VOD indisponible…), on passe à la suivante au lieu d'arrêter.
-MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 16)
+#: Nombre max de clips ESSAYÉS par cycle (téléchargés + notés par le LLM) : un
+#: clip refusé (note trop basse, échec réseau…) fait passer au suivant.
+MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 20)
 #: Une source n'est définitivement abandonnée qu'après ce nombre d'échecs.
 MAX_SOURCE_FAILURES: int = _get_int("MAX_SOURCE_FAILURES", 3)
 #: Nombre max de clips produits/publiés par cycle (toutes chaînes confondues).
@@ -126,8 +124,6 @@ HTTP_TIMEOUT: int = _get_int("HTTP_TIMEOUT", 20)
 # ---------------------------------------------------------------------------
 # Secrets / clés API
 # ---------------------------------------------------------------------------
-YOUTUBE_API_KEY: str | None = _get("YOUTUBE_API_KEY")
-
 TWITCH_CLIENT_ID: str | None = _get("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET: str | None = _get("TWITCH_CLIENT_SECRET")
 
@@ -157,85 +153,11 @@ DRIVE_ROOT_FOLDER_NAME_FR: str = _get("DRIVE_ROOT_FOLDER_NAME_FR", "clipping-bot
 #: Marchés activés. Retire "fr" ou "intl" pour n'en produire qu'un.
 MARKETS: list[str] = _get_list("MARKETS", ["fr", "intl"])
 
-# --- Contenu "cute / relax" généré (chaîne d'origine, hors clipping) ---
-#: Active la génération de vidéos relax (thumb-game). Dossier Drive dédié.
-RELAX_ENABLE: bool = _get_bool("RELAX_ENABLE", True)
-RELAX_DRIVE_FOLDER_NAME: str = _get("RELAX_DRIVE_FOLDER_NAME", "clipping-bot-relax")
-#: Nombre de vidéos relax générées par run.
-RELAX_PER_RUN: int = _get_int("RELAX_PER_RUN", 2)
-
-# --- Contenu faceless "valeur" (niche argent/IA) : voix off IA + sous-titres ---
-FACELESS_ENABLE: bool = _get_bool("FACELESS_ENABLE", False)  # coupé : 0 vue
-FACELESS_DRIVE_FOLDER_NAME: str = _get("FACELESS_DRIVE_FOLDER_NAME", "clipping-bot-ai")
-FACELESS_PER_RUN: int = _get_int("FACELESS_PER_RUN", 2)
-#: Sujet/niche de la chaîne (pilote la génération de script).
-FACELESS_TOPIC: str = _get("FACELESS_TOPIC", "AI tools & automation to make money and work smarter")
-#: Style visuel : "cinematic" (sombre/luxe/réussite, étalonnage contrasté +
-#: grain + vignette — l'esthétique motivation) ou "clean" (tech/moderne clair).
-FACELESS_STYLE: str = _get("FACELESS_STYLE", "cinematic")
-#: Voix edge-tts (gratuite). Ex. en-US-GuyNeural, en-US-AriaNeural, en-US-JennyNeural.
-FACELESS_VOICE: str = _get("FACELESS_VOICE", "en-US-GuyNeural")
-FACELESS_VOICE_RATE: str = _get("FACELESS_VOICE_RATE", "+8%")  # débit un peu plus punchy
-#: Longueur visée de la narration (mots). ~150 mots ≈ 60-70s (seuil Creator Rewards).
-FACELESS_WORDS: int = _get_int("FACELESS_WORDS", 150)
-#: Visuels : nb de prompts d'images IA demandés au script + plafond d'images
-#: générées par vidéo (chaque image IA = ~6-10s de génération Pollinations).
-FACELESS_SCENES: int = _get_int("FACELESS_SCENES", 5)
-FACELESS_MAX_IMAGES: int = _get_int("FACELESS_MAX_IMAGES", 4)
-#: B-roll libre de droits via Pexels (clé gratuite), en repli si l'IA échoue.
-PEXELS_API_KEY: str | None = _get("PEXELS_API_KEY")
-
-# --- Clips "Asie" (Thaïlande + Corée) : clips Twitch de leur communauté ---
-# Simple à récupérer (API Helix, téléchargeable en CI), orienté public thaï.
-ASIA_ENABLE: bool = _get_bool("ASIA_ENABLE", True)
-ASIA_DRIVE_FOLDER_NAME: str = _get("ASIA_DRIVE_FOLDER_NAME", "clipping-bot-asia")
-#: Langues ciblées (Twitch). Thaï en priorité (la Corée est peu présente sur Twitch).
-ASIA_LANGUAGES: list[str] = _get_list("ASIA_LANGUAGES", ["th"])
-#: Seuil viewers bas : les streamers thaï sont plus petits qu'en EN/FR.
-ASIA_MIN_VIEWERS: int = _get_int("ASIA_MIN_VIEWERS", 150)
-ASIA_CLIP_MIN_VIEWS: int = _get_int("ASIA_CLIP_MIN_VIEWS", 30)
-ASIA_PER_RUN: int = _get_int("ASIA_PER_RUN", 3)
-
-# --- Clips "cute/animaux/satisfying" via Pexels (public thaï/asie) ---
-# Source fiable (Reddit a verrouillé son API). Réutilise PEXELS_API_KEY.
-CUTE_ENABLE: bool = _get_bool("CUTE_ENABLE", True)
-CUTE_DRIVE_FOLDER_NAME: str = _get("CUTE_DRIVE_FOLDER_NAME", "clipping-bot-cute")
-CUTE_QUERIES: list[str] = _get_list(
-    "CUTE_QUERIES",
-    ["cute puppy", "kitten", "funny cat", "funny dog", "baby animals",
-     "golden retriever", "hamster", "oddly satisfying", "cute animals"],
-)
-CUTE_PER_QUERY: int = _get_int("CUTE_PER_QUERY", 8)
-CUTE_PER_RUN: int = _get_int("CUTE_PER_RUN", 3)
-CUTE_CLIP_MAX_S: int = _get_int("CUTE_CLIP_MAX_S", 30)
-
-# --- Clips Reddit "cute" (API désormais verrouillée par Reddit — dormant) ---
-REDDIT_ENABLE: bool = _get_bool("REDDIT_ENABLE", False)
-REDDIT_DRIVE_FOLDER_NAME: str = _get("REDDIT_DRIVE_FOLDER_NAME", "clipping-bot-cute")
-#: API OAuth Reddit (app "script" — gratuite). Read-only public via client_credentials.
-REDDIT_CLIENT_ID: str | None = _get("REDDIT_CLIENT_ID")
-REDDIT_CLIENT_SECRET: str | None = _get("REDDIT_CLIENT_SECRET")
-REDDIT_USER_AGENT: str = _get("REDDIT_USER_AGENT", "clipping-bot/1.0 by u/clippingbot")
-#: Subreddits vidéo à fort attrait pan-asiatique (animaux mignons + satisfying).
-REDDIT_SUBREDDITS: list[str] = _get_list(
-    "REDDIT_SUBREDDITS",
-    ["AnimalsBeingDerps", "aww", "AnimalsBeingBros", "Zoomies", "rarepuppers",
-     "cats", "oddlysatisfying", "Eyebleach"],
-)
-REDDIT_TIME: str = _get("REDDIT_TIME", "week")   # hour|day|week|month|year|all
-REDDIT_MIN_UPS: int = _get_int("REDDIT_MIN_UPS", 2000)
-REDDIT_PER_RUN: int = _get_int("REDDIT_PER_RUN", 3)
-#: Durée max d'un clip Reddit (on tronque les longues vidéos).
-REDDIT_CLIP_MAX_S: int = _get_int("REDDIT_CLIP_MAX_S", 60)
-
 # --- Nettoyage automatique du dossier clips (pour garder de la place) ---
 #: On purge les clips plus vieux que N heures à chaque cycle (0 = désactivé).
 DRIVE_CLEANUP_MAX_AGE_H: int = _get_int("DRIVE_CLEANUP_MAX_AGE_H", 48)
 #: True = suppression définitive (récupère la place tout de suite). False = corbeille.
 DRIVE_CLEANUP_HARD_DELETE: bool = _get_bool("DRIVE_CLEANUP_HARD_DELETE", True)
-
-UPLOADPOST_API_KEY: str | None = _get("UPLOADPOST_API_KEY")
-UPLOADPOST_USER: str | None = _get("UPLOADPOST_USER")
 
 # --- Notification e-mail (récap quand des clips sont déposés sur Drive) ---
 NOTIFY_EMAIL_ENABLE: bool = _get_bool("NOTIFY_EMAIL_ENABLE", False)
@@ -247,96 +169,77 @@ SMTP_PASSWORD: str | None = _get("SMTP_PASSWORD")  # mot de passe d'APPLICATION 
 
 
 # ---------------------------------------------------------------------------
-# Bloc 1 — Détection
+# Bloc 1 — Détection (clips GAMING déjà viraux, focus GTA 6)
 # ---------------------------------------------------------------------------
-# YouTube
-#: YouTube comme SOURCE de clips. DÉSACTIVÉ par défaut : en CI (IP datacenter),
-#: yt-dlp est bloqué par l'anti-bot ("Sign in to confirm you're not a bot"), donc
-#: on détecte des vidéos qu'on ne peut pas télécharger => essais gaspillés. On
-#: s'appuie sur Twitch/Kick (téléchargeables). Réactive-le en local, ou en CI si
-#: tu fournis un fichier cookies valide (secret YOUTUBE_COOKIES).
-YOUTUBE_SOURCE_ENABLE: bool = _get_bool("YOUTUBE_SOURCE_ENABLE", False)
-YOUTUBE_REGION: str = _get("YOUTUBE_REGION", "FR")
-#: Catégories YouTube ciblées (IDs officiels).
-#: 20=Gaming, 24=Entertainment, 17=Sports, 23=Comedy, 22=People&Blogs.
-YOUTUBE_CATEGORY_IDS: list[str] = _get_list("YOUTUBE_CATEGORY_IDS", ["20", "24", "23"])
-YOUTUBE_MAX_RESULTS: int = _get_int("YOUTUBE_MAX_RESULTS", 15)
-#: On ignore les vidéos trop courtes (Shorts, déjà verticales) ou trop longues.
-YOUTUBE_MIN_DURATION_S: int = _get_int("YOUTUBE_MIN_DURATION_S", 120)
-YOUTUBE_MAX_DURATION_S: int = _get_int("YOUTUBE_MAX_DURATION_S", 4 * 3600)
-YOUTUBE_MIN_VIEWS: int = _get_int("YOUTUBE_MIN_VIEWS", 20_000)
+# Un seul type de contenu : des clips Twitch/Kick DÉJÀ viraux (sélectionnés par
+# la communauté), filtrés par JEU. On interroge directement l'API Clips de
+# Twitch par catégorie de jeu (`/clips?game_id=`) : c'est la source la plus
+# fiable et la plus ciblée (tous les streamers du jeu, pas seulement le top live).
+#
+#: Jeux PRIORITAIRES (nom exact de la catégorie Twitch). Ils reçoivent un bonus
+#: de score => ils passent toujours devant les jeux secondaires.
+GAMES_PRIMARY: list[str] = _get_list("GAMES_PRIMARY", ["Grand Theft Auto VI"])
+#: Jeux SECONDAIRES : utilisés pour compléter le quota quand le prioritaire ne
+#: suffit pas (ex. avant la sortie / jours creux). Vide = prioritaires seulement.
+GAMES_SECONDARY: list[str] = _get_list("GAMES_SECONDARY", ["Grand Theft Auto V"])
+#: Bonus de score (0-100) des jeux prioritaires.
+PRIMARY_GAME_BOOST: float = _get_float("PRIMARY_GAME_BOOST", 25.0)
 
 # Twitch
-#: Source Twitch : "clips" (moments déjà viraux via l'API Clips — RECOMMANDÉ)
-#: ou "vods" (ancien mode : échantillonnage de VODs longues).
-TWITCH_SOURCE: str = _get("TWITCH_SOURCE", "clips")
-#: Clips : on récupère les plus vus des N derniers jours chez les streamers chauds.
-TWITCH_CLIPS_DAYS: int = _get_int("TWITCH_CLIPS_DAYS", 7)
-TWITCH_CLIPS_PER_STREAMER: int = _get_int("TWITCH_CLIPS_PER_STREAMER", 8)
-TWITCH_CLIP_MIN_VIEWS: int = _get_int("TWITCH_CLIP_MIN_VIEWS", 50)
-#: Catégories/jeux Twitch à EXCLURE (sous-chaîne du nom du jeu, insensible à la
-#: casse). GTA RP sature les tops streamers => exclu par défaut pour diversifier.
-#: Vide cette variable (TWITCH_GAME_BLACKLIST="") pour réautoriser tous les jeux.
-TWITCH_GAME_BLACKLIST: list[str] = _get_list("TWITCH_GAME_BLACKLIST", ["grand theft auto"])
+#: Fenêtre de fraîcheur des clips (jours). Court = actualité (sortie GTA 6).
+TWITCH_CLIPS_DAYS: int = _get_int("TWITCH_CLIPS_DAYS", 3)
+#: Pages de 100 clips lues par jeu (triées par vues décroissantes).
+TWITCH_CLIPS_PAGES: int = _get_int("TWITCH_CLIPS_PAGES", 8)
+#: Seuil de vues VISÉ. Il est abaissé automatiquement (jusqu'au plancher) quand
+#: une langue a moins de TWITCH_MIN_POOL_PER_LANG clips : le LLM tranche ensuite.
+TWITCH_CLIP_MIN_VIEWS: int = _get_int("TWITCH_CLIP_MIN_VIEWS", 100)
+TWITCH_CLIP_FLOOR_VIEWS: int = _get_int("TWITCH_CLIP_FLOOR_VIEWS", 10)
+TWITCH_MIN_POOL_PER_LANG: int = _get_int("TWITCH_MIN_POOL_PER_LANG", 12)
+#: Langues retenues (langue de diffusion du streamer).
+TWITCH_LANGUAGES: list[str] = _get_list("TWITCH_LANGUAGES", ["fr", "en"])
 #: MODE CAMPAGNE (monétisation) : créateurs ciblés en priorité, même hors live.
-#: Beaucoup de streamers paient les clippeurs AU NOMBRE DE VUES (programmes
-#: "content rewards"/"clipping campaigns") : on vise alors UNIQUEMENT leurs clips.
 TARGET_STREAMERS_TWITCH: list[str] = _get_list("TARGET_STREAMERS_TWITCH", [])  # logins
 TARGET_CHANNELS_KICK: list[str] = _get_list("TARGET_CHANNELS_KICK", [])         # slugs
-#: True = on ne clippe QUE les créateurs ciblés (sinon : ciblés en priorité + tendances).
+#: True = on ne clippe QUE les créateurs ciblés (sinon : ciblés en priorité + jeux).
 TARGET_ONLY: bool = _get_bool("TARGET_ONLY", False)
+#: True = un créateur ciblé est clippé quel que soit son jeu (sinon : jeux suivis only).
+TARGET_ANY_GAME: bool = _get_bool("TARGET_ANY_GAME", False)
 TARGET_SCORE_BOOST: float = _get_float("TARGET_SCORE_BOOST", 30.0)
-#: Diversité : nombre max de clips gardés PAR JEU dans la file finale (0 = illimité).
-TWITCH_MAX_CLIPS_PER_GAME: int = _get_int("TWITCH_MAX_CLIPS_PER_GAME", 3)
-TWITCH_MIN_VIEWERS: int = _get_int("TWITCH_MIN_VIEWERS", 3000)
-TWITCH_TOP_STREAMS: int = _get_int("TWITCH_TOP_STREAMS", 20)
-#: Langues de streams retenues (Helix `language`).
-TWITCH_LANGUAGES: list[str] = _get_list("TWITCH_LANGUAGES", ["fr", "en"])
-#: Nb de VODs récentes récupérées par streamer détecté.
-TWITCH_VODS_PER_STREAMER: int = _get_int("TWITCH_VODS_PER_STREAMER", 2)
-TWITCH_MIN_VOD_DURATION_S: int = _get_int("TWITCH_MIN_VOD_DURATION_S", 300)
+
+# Diversité / anti-doublons
+#: Max de clips gardés PAR STREAMER dans la file (sinon 1 gros streamer rafle tout).
+MAX_CLIPS_PER_STREAMER: int = _get_int("MAX_CLIPS_PER_STREAMER", 2)
+#: Deux clips du même streamer dont les moments sont à moins de N secondes
+#: d'écart dans la VOD = le même moment clippé par 2 viewers => on garde le meilleur.
+DUPLICATE_WINDOW_S: int = _get_int("DUPLICATE_WINDOW_S", 45)
+#: Durée minimale d'un clip source (trop court = pas d'histoire).
+SOURCE_CLIP_MIN_S: int = _get_int("SOURCE_CLIP_MIN_S", 8)
 
 # Kick (API publique non officielle — best-effort, protégé Cloudflare)
-#: Slugs de chaînes Kick à surveiller en priorité (fallback si l'endpoint
-#: "featured/livestreams" est bloqué).
+#: Chaînes Kick surveillées (on ne garde que leurs clips sur les jeux suivis).
+KICK_ENABLE: bool = _get_bool("KICK_ENABLE", True)
 KICK_CHANNELS: list[str] = _get_list("KICK_CHANNELS", ["xqc", "trainwreckstv", "adin"])
 #: Chaînes Kick francophones (leurs clips partent dans le marché "fr").
-KICK_FR_CHANNELS: list[str] = _get_list(
-    "KICK_FR_CHANNELS", ["kamet0", "amine", "billy"]
-)
-KICK_MIN_VIEWERS: int = _get_int("KICK_MIN_VIEWERS", 2000)
-KICK_VODS_PER_CHANNEL: int = _get_int("KICK_VODS_PER_CHANNEL", 2)
+KICK_FR_CHANNELS: list[str] = _get_list("KICK_FR_CHANNELS", ["kamet0", "amine", "billy"])
 KICK_FEATURED_LIMIT: int = _get_int("KICK_FEATURED_LIMIT", 20)
-#: Source Kick : "clips" (moments déjà viraux — RECOMMANDÉ) ou "vods".
-KICK_SOURCE: str = _get("KICK_SOURCE", "clips")
-KICK_CLIPS_PER_CHANNEL: int = _get_int("KICK_CLIPS_PER_CHANNEL", 8)
-KICK_CLIP_MIN_VIEWS: int = _get_int("KICK_CLIP_MIN_VIEWS", 50)
+KICK_CLIPS_PER_CHANNEL: int = _get_int("KICK_CLIPS_PER_CHANNEL", 10)
+KICK_CLIP_MIN_VIEWS: int = _get_int("KICK_CLIP_MIN_VIEWS", 100)
 #: Fenêtre de tri des clips Kick : day | week | month | all.
 KICK_CLIPS_TIME: str = _get("KICK_CLIPS_TIME", "week")
 
-# --- Filtres qualité de contenu (le plus gros levier sur la qualité des clips) ---
-# On écarte le contenu "recyclé"/narration (récaps de films, compilations,
-# trailers…) : pas de visage expressif, pas de réaction => clips plats.
-# On veut du "talking head" : créateurs/streamers qui réagissent et parlent.
+# --- Filtres qualité de contenu ---
+#: Titres de clips à écarter : retransmissions officielles / contenu recyclé
+#: (pas de réaction, pas de facecam => clips plats).
 TITLE_BLACKLIST: list[str] = _get_list(
     "TITLE_BLACKLIST",
     [
-        # Contenu recyclé / narration (pas de visage, pas de réaction)
-        "recap", "récap", "résumé du film", "resume du film", "histoire du film",
-        "raconte l'histoire", "explained", "compilation", "best of", "full movie",
-        "film complet", "trailer", "bande-annonce", "bande annonce", "lyric",
-        "top 10", "top10", "mashup", "edit audio",
-        # Retransmissions esport officielles : commentaire technique, aucune
-        # facecam, aucune punchline => clips systématiquement plats.
+        "trailer reupload", "full movie", "compilation", "best of", "lyric",
         "bo3", "bo5", "playoff", "qualifier", "group stage", "grand final",
-        "championship", "tournament", "esports", "stage 0", "showmatch",
+        "tournament", "esports",
     ],
 )
 #: Créateurs/chaînes à exclure (sous-chaîne, insensible à la casse).
 CHANNEL_BLACKLIST: list[str] = _get_list("CHANNEL_BLACKLIST", [])
-#: Une fenêtre avec trop peu de parole (musique/gameplay muet) ne donne rien de
-#: bon : ni sous-titres, ni accroche. On la saute.
-MIN_WORDS_PER_WINDOW: int = _get_int("MIN_WORDS_PER_WINDOW", 40)
 
 
 # ---------------------------------------------------------------------------
@@ -346,61 +249,62 @@ MIN_WORDS_PER_WINDOW: int = _get_int("MIN_WORDS_PER_WINDOW", 40)
 DOWNLOAD_MAX_HEIGHT: int = _get_int("DOWNLOAD_MAX_HEIGHT", 1080)
 #: Nombre de tentatives yt-dlp internes (indépendant de notre décorateur retry).
 DOWNLOAD_RETRIES: int = _get_int("DOWNLOAD_RETRIES", 3)
-#: Téléchargements de fragments HLS/DASH en parallèle (VODs Twitch/Kick).
 DOWNLOAD_CONCURRENCY: int = _get_int("DOWNLOAD_CONCURRENCY", 8)
-#: Clients de lecture yt-dlp. VIDE = laisser yt-dlp choisir (recommandé).
-#: Forcer "tv"/"mweb" casse le téléchargement ("The page needs to be reloaded")
-#: sans pour autant contourner l'anti-bot des IP datacenter : seule la solution
-#: cookies fonctionne. On garde le réglage disponible mais désactivé.
-YTDLP_PLAYER_CLIENTS: list[str] = _get_list("YTDLP_PLAYER_CLIENTS", [])
-#: Solution de secours la plus fiable : un fichier cookies YouTube (format
-#: Netscape). En CI, le secret YOUTUBE_COOKIES est écrit dans ce fichier.
-YOUTUBE_COOKIES_FILE: str | None = _get("YOUTUBE_COOKIES_FILE", "./youtube_cookies.txt")
-
-# --- Stratégie "longs VODs" (subathons de 20-40h impossibles à traiter en free tier) ---
-#: VOD de durée <= ce seuil => on télécharge/traite l'intégralité.
-#: 20 min : au-delà (VODs Twitch/Kick), on échantillonne (le download Twitch est lent).
-SOURCE_FULL_MAX_DURATION_S: int = _get_int("SOURCE_FULL_MAX_DURATION_S", 1200)
-#: Au-delà, on échantillonne N fenêtres COURTES réparties dans le VOD.
-#: Fenêtres courtes = download/transcription rapides (tient dans le budget Actions).
-SAMPLE_WINDOWS: int = _get_int("SAMPLE_WINDOWS", 2)
-SAMPLE_WINDOW_S: int = _get_int("SAMPLE_WINDOW_S", 240)  # 4 min
-#: On saute le début (mise en route, écran d'attente, pub) et la toute fin.
-SAMPLE_SKIP_INTRO_S: int = _get_int("SAMPLE_SKIP_INTRO_S", 300)
-SAMPLE_SKIP_OUTRO_S: int = _get_int("SAMPLE_SKIP_OUTRO_S", 180)
-#: Garde-fou absolu : on ignore purement un VOD au-delà (0 = pas de limite).
-SOURCE_HARD_MAX_DURATION_S: int = _get_int("SOURCE_HARD_MAX_DURATION_S", 0)
 
 
 # ---------------------------------------------------------------------------
-# Bloc 3 — Transcription (Whisper)
+# Bloc 3 — Transcription (Whisper) => sous-titres
 # ---------------------------------------------------------------------------
-# medium : nettement plus précis que small (surtout en français). Viable car
-# les clips sont courts (5-60s) => transcription rapide malgré le modèle plus lourd.
-WHISPER_MODEL: str = _get("WHISPER_MODEL", "medium")
-WHISPER_LANGUAGE: str | None = _get("WHISPER_LANGUAGE")  # None => autodetect
+# large-v3-turbo : précision proche de large-v3 (nettement > medium, surtout en
+# français et sur les noms propres) pour une vitesse ~ medium sur CPU (décodeur
+# 4 couches). Gratuit, local, 0 quota.
+WHISPER_MODEL: str = _get("WHISPER_MODEL", "large-v3-turbo")
+WHISPER_LANGUAGE: str | None = _get("WHISPER_LANGUAGE")  # None => langue du clip / autodetect
 WHISPER_DEVICE: str = _get("WHISPER_DEVICE", "cpu")
 #: Type de calcul faster-whisper : "int8" (rapide/CPU), "int8_float16", "float32".
 WHISPER_COMPUTE_TYPE: str = _get("WHISPER_COMPUTE_TYPE", "int8")
+#: VAD (Silero) : ne transcrit que la parole. Indispensable en gaming : sinon
+#: Whisper "hallucine" des phrases sur la musique/les bruitages du jeu.
+WHISPER_VAD: bool = _get_bool("WHISPER_VAD", True)
+#: Vocabulaire injecté à Whisper (noms propres bien orthographiés).
+WHISPER_HOTWORDS: str = _get(
+    "WHISPER_HOTWORDS",
+    "GTA, GTA 6, GTA VI, Vice City, Leonida, Lucia, Jason, Rockstar, GTA RP",
+)
 
 
 # ---------------------------------------------------------------------------
-# Bloc 4 — Détection moments viraux (Gemini)
+# Bloc 4 — Titre / hashtags / note qualité (LLM multimodal gratuit : Gemini)
 # ---------------------------------------------------------------------------
-# flash-lite : quota free tier plus généreux (RPM plus élevé) que flash, et
-# largement suffisant pour de l'extraction JSON structurée. Alias "-latest" pour
-# éviter la valse des versions retirées. Surchargeable via env.
-GEMINI_MODEL: str = _get("GEMINI_MODEL", "gemini-flash-lite-latest")
-GEMINI_MAX_CLIPS: int = _get_int("GEMINI_MAX_CLIPS", 5)
-GEMINI_MIN_CLIPS: int = _get_int("GEMINI_MIN_CLIPS", 3)
-#: Fenêtre de durée acceptable d'un clip TikTok (secondes).
-CLIP_MIN_DURATION_S: int = _get_int("CLIP_MIN_DURATION_S", 15)
-CLIP_MAX_DURATION_S: int = _get_int("CLIP_MAX_DURATION_S", 75)
-#: Rate limit free tier Gemini 1.5 Flash : 15 req/min => ~4s d'espacement.
-GEMINI_MIN_INTERVAL_S: float = _get_float("GEMINI_MIN_INTERVAL_S", 4.0)
-#: Seuil de qualité : on ignore les moments dont le score LLM est sous ce seuil
-#: (0-100). Mieux vaut peu de bons clips que beaucoup de moyens.
-GEMINI_MIN_SCORE: float = _get_float("GEMINI_MIN_SCORE", 78.0)
+# Gemini REGARDE le clip (vidéo basse définition + audio) : il comprend l'action
+# de gameplay même sans dialogue, ce qu'un LLM texte seul ne peut pas faire.
+# Chaîne de modèles essayés dans l'ordre (repli sur 404 = modèle retiré, 429 =
+# quota, délai dépassé). Uniquement des alias "-latest" : Google les fait
+# pointer sur le dernier modèle, donc jamais de 404 quand une version est retirée.
+GEMINI_MODELS: list[str] = _get_list(
+    "GEMINI_MODELS",
+    [_get("GEMINI_MODEL") or "gemini-flash-latest", "gemini-flash-lite-latest"],
+)
+#: Délai max d'UN appel (s). Flash répond normalement en 10-30 s ; surchargé il
+#: peut mettre plus de 10 min => on bascule sur le modèle suivant.
+GEMINI_TIMEOUT_S: float = _get_float("GEMINI_TIMEOUT_S", 75.0)
+#: Envoie la vidéo du clip au modèle (sinon : titre + transcription seuls).
+GEMINI_SEND_VIDEO: bool = _get_bool("GEMINI_SEND_VIDEO", True)
+#: Espacement minimal entre deux appels (free tier ~10 req/min sur Flash).
+GEMINI_MIN_INTERVAL_S: float = _get_float("GEMINI_MIN_INTERVAL_S", 7.0)
+#: Sélection "meilleurs parmi N" : on fait noter N clips par marché puis on ne
+#: monte que les CLIPS_PER_MARKET mieux notés (au lieu des premiers qui passent).
+BRIEFS_PER_MARKET: int = _get_int("BRIEFS_PER_MARKET", 6)
+#: Note mini (0-100) donnée par le LLM pour garder un clip. 0 = tout garder.
+CLIP_MIN_SCORE: float = _get_float("CLIP_MIN_SCORE", 55.0)
+#: True = un clip que le LLM n'a pas pu noter (panne/quota) n'est PAS publié :
+#: il est retenté au cycle suivant. Mieux vaut 4 bons clips que 6 dont 2 au hasard.
+REQUIRE_LLM: bool = _get_bool("REQUIRE_LLM", True)
+#: Le LLM peut raccourcir le clip (couper un début mou / une fin qui traîne).
+SMART_TRIM: bool = _get_bool("SMART_TRIM", True)
+#: Fenêtre de durée acceptable d'un clip final (secondes).
+CLIP_MIN_DURATION_S: int = _get_int("CLIP_MIN_DURATION_S", 8)
+CLIP_MAX_DURATION_S: int = _get_int("CLIP_MAX_DURATION_S", 60)
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +348,9 @@ CAM_MIN_WIDTH_FRAC: float = _get_float("CAM_MIN_WIDTH_FRAC", 0.45)
 BLUR_FG_HEIGHT_FRAC: float = _get_float("BLUR_FG_HEIGHT_FRAC", 0.50)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
+#: Encodage FINAL (le seul avec perte). crf plus bas = meilleure image, fichier plus lourd.
+FINAL_CRF: int = _get_int("FINAL_CRF", 19)
+FINAL_PRESET: str = _get("FINAL_PRESET", "fast")
 #: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
 AUDIO_LOUDNORM: bool = _get_bool("AUDIO_LOUDNORM", True)
 AUDIO_LOUDNORM_I: float = _get_float("AUDIO_LOUDNORM_I", -14.0)
@@ -468,12 +375,11 @@ SUB_UPPERCASE: bool = _get_bool("SUB_UPPERCASE", True)     # MAJUSCULES = punch
 SUB_STRIP_PUNCT: bool = _get_bool("SUB_STRIP_PUNCT", True)
 SUB_MAX_WORDS_PER_LINE: int = _get_int("SUB_MAX_WORDS_PER_LINE", 3)
 
-# Titre fixe (hook) affiché en haut du clip, toute la durée.
+#: Max de caractères par groupe : au-delà, la ligne passerait sur 2 lignes.
+SUB_MAX_CHARS_PER_LINE: int = _get_int("SUB_MAX_CHARS_PER_LINE", 18)
+
+# Titre d'accroche (hook) affiché en haut du clip, toute la durée (image PNG).
 TITLE_ENABLE: bool = _get_bool("TITLE_ENABLE", True)
-TITLE_FONT_SIZE: int = _get_int("TITLE_FONT_SIZE", 88)     # gros titre d'accroche impact
-TITLE_MARGIN_V: int = _get_int("TITLE_MARGIN_V", 170)      # distance depuis le haut
-TITLE_UPPERCASE: bool = _get_bool("TITLE_UPPERCASE", True) # MAJUSCULES = punch
-TITLE_BOX: bool = _get_bool("TITLE_BOX", False)            # False = gros texte contour (style réf)
 #: Surligne en jaune les mots "punch" du titre (comme les captions virales).
 TITLE_HIGHLIGHT: bool = _get_bool("TITLE_HIGHLIGHT", True)
 #: Titre rendu en image (natif TikTok) au lieu du texte ASS : "box" (boîtes
@@ -547,10 +453,9 @@ DRIVE_SUBDIR_LOGS: str = "logs"
 #: Secrets/env requis pour exécuter chaque bloc. Permet de valider seulement
 #: ce dont on a besoin (ex : tester le Bloc 1 sans clés Gemini/Drive).
 REQUIRED_BY_BLOCK: dict[str, list[str]] = {
-    "youtube": ["YOUTUBE_API_KEY"],
     "twitch": ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"],
     "kick": [],  # scraping public, pas de clé
-    "detection": ["YOUTUBE_API_KEY", "TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"],
+    "detection": ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"],
     "download": [],  # credentials Drive gérées par la vérif dédiée ci-dessous
     "drive": [],     # idem (OAuth : GOOGLE_DRIVE_FOLDER_ID est optionnel)
     "viral": ["GEMINI_API_KEY"],

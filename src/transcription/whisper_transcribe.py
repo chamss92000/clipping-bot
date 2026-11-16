@@ -1,4 +1,4 @@
-"""Bloc 3 — Transcription Whisper (openai-whisper, modèle "base", CPU).
+"""Bloc 3 — Transcription Whisper (faster-whisper, large-v3-turbo, CPU).
 
 Produit un transcript **timestampé au mot** (`word_timestamps=True`) — c'est ce
 qui permettra les sous-titres animés mot-par-mot du Bloc 6, et un découpage
@@ -15,6 +15,7 @@ persistance sur Drive et transmission au Bloc 4.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -109,6 +110,26 @@ def _load_model(name: str):
     return model
 
 
+#: Phrases que Whisper "hallucine" sur de la musique/du bruit de jeu (fin de
+#: vidéo YouTube, crédits de sous-titreurs…). Jamais prononcées dans un clip.
+_HALLUCINATIONS = re.compile(
+    r"(sous-titr|amara\.org|merci d'avoir regard|abonnez-vous|thanks? for watching|"
+    r"please subscribe|like and subscribe|subtitles by|transcribed by|♪)",
+    re.IGNORECASE,
+)
+
+
+def _is_hallucination(seg) -> bool:
+    text = (seg.text or "").strip()
+    if not text or _HALLUCINATIONS.search(text):
+        return True
+    # Segment "parlé" que le modèle juge lui-même non-parole et peu probable.
+    if getattr(seg, "no_speech_prob", 0.0) > 0.6 and getattr(seg, "avg_logprob", 0.0) < -1.0:
+        return True
+    # Boucle de répétition typique ("ha ha ha ha…", même mot x10).
+    return getattr(seg, "compression_ratio", 0.0) > 2.6
+
+
 def transcribe(
     media_path: str | Path,
     language: str | None = None,
@@ -117,29 +138,48 @@ def transcribe(
 ) -> Transcript:
     """Transcrit un média et retourne un `Transcript` timestampé au mot.
 
-    :param source_offset: ajouté à tous les timestamps (référentiel VOD source
-        quand on a téléchargé une fenêtre échantillonnée).
+    :param language: code langue connu (ex. langue du stream Twitch) ; évite une
+        mauvaise auto-détection sur les premières secondes (souvent du bruit de jeu).
     """
     media_path = Path(media_path)
     if not media_path.exists():
         raise TranscriptionError(f"Média introuvable : {media_path}")
 
     model_name = model_name or settings.WHISPER_MODEL
-    language = language if language is not None else settings.WHISPER_LANGUAGE
+    language = (language or settings.WHISPER_LANGUAGE or None)
+    if language:
+        language = language.split("-")[0].lower()
     model = _load_model(model_name)
 
     log.info("Whisper: transcription de %s (lang=%s)…", media_path.name, language or "auto")
+    kwargs = dict(
+        language=language,
+        word_timestamps=True,
+        vad_filter=settings.WHISPER_VAD,
+        vad_parameters={"min_silence_duration_ms": 400},
+        # Pas de contexte entre segments : coupe les boucles d'hallucination.
+        condition_on_previous_text=False,
+        beam_size=5,
+    )
+    if settings.WHISPER_HOTWORDS:
+        kwargs["hotwords"] = settings.WHISPER_HOTWORDS
     try:
-        seg_iter, info = model.transcribe(
-            str(media_path),
-            language=language,
-            word_timestamps=True,
-        )
+        try:
+            seg_iter, info = model.transcribe(str(media_path), **kwargs)
+        except TypeError:  # vieille version de faster-whisper sans `hotwords`
+            kwargs.pop("hotwords", None)
+            kwargs["initial_prompt"] = settings.WHISPER_HOTWORDS or None
+            seg_iter, info = model.transcribe(str(media_path), **kwargs)
+        raw_segments = list(seg_iter)  # générateur : l'itération déclenche le calcul
     except Exception as exc:  # noqa: BLE001
         raise TranscriptionError(f"Échec transcription {media_path.name} : {exc}") from exc
 
     segments: list[Segment] = []
-    for seg in seg_iter:  # générateur : l'itération déclenche le calcul
+    dropped = 0
+    for seg in raw_segments:
+        if _is_hallucination(seg):
+            dropped += 1
+            continue
         words = [
             Word(
                 start=round(float(w.start) + source_offset, 3),
@@ -148,6 +188,8 @@ def transcribe(
             )
             for w in (seg.words or [])
             if w.start is not None and w.end is not None
+            # mot très improbable ET très court = bruit (cri, explosion…)
+            and not (getattr(w, "probability", 1.0) < 0.15 and (w.end - w.start) < 0.12)
         ]
         segments.append(
             Segment(
@@ -159,15 +201,13 @@ def transcribe(
         )
 
     transcript = Transcript(
-        language=getattr(info, "language", language or ""),
+        language=getattr(info, "language", language or "") or (language or ""),
         segments=segments,
         source_offset=source_offset,
     )
     log.info(
-        "Whisper: %d segments, %d mots, langue=%s",
-        len(segments),
-        sum(len(s.words) for s in segments),
-        transcript.language,
+        "Whisper: %d segments (%d hallucination(s) filtrée(s)), %d mots, langue=%s",
+        len(segments), dropped, sum(len(s.words) for s in segments), transcript.language,
     )
     return transcript
 

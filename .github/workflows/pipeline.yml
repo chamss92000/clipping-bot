@@ -1,9 +1,11 @@
 name: clipping-pipeline
 
-# Bloc 8 — Orchestration : 1 livraison/jour (19:00 UTC = prime time FR + US en live) + manuel.
+# Clips gaming (focus GTA 6) : 2 livraisons/jour + manuel.
+# 11:00 UTC = clips de la nuit US/soirée EU ; 19:00 UTC = prime time FR + après-midi US.
 on:
   schedule:
-    - cron: "0 19 * * *"       # 1x/jour : streamers FR (21h) et US (15h ET) en live
+    - cron: "0 11 * * *"
+    - cron: "0 19 * * *"
   workflow_dispatch:
     inputs:
       detect_only:
@@ -49,82 +51,59 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -U yt-dlp   # toujours la derniere version (extraction YouTube)
+          pip install -U yt-dlp   # toujours la derniere version (extracteurs Twitch/Kick)
+
+      - name: Tests unitaires (rapides, sans réseau)
+        run: python -m pytest -q tests
 
       - name: Cache modele Whisper (HuggingFace)
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: whisper-faster-${{ hashFiles('config/settings.py') }}
-          restore-keys: whisper-faster-
-
-      - name: Cookies YouTube (optionnel — contourne la verif anti-bot)
-        env:
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
-        run: |
-          if [ -n "$YOUTUBE_COOKIES" ]; then
-            printf '%s' "$YOUTUBE_COOKIES" > youtube_cookies.txt
-            echo "Cookies YouTube configures."
-          else
-            echo "Pas de cookies YouTube (optionnel) - on compte sur les clients alternatifs et Twitch/Kick."
-          fi
-
+          key: whisper-${{ vars.WHISPER_MODEL || 'large-v3-turbo' }}
+          
       - name: Run pipeline
         env:
-          # --- Bloc 1 ---
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          # --- Secrets ---
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
-          # --- Bloc 4 ---
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # --- Bloc 2 (storage Drive, OAuth headless) ---
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          # --- Bloc 7 (TikTok API officielle) ---
           TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           TIKTOK_PRIVACY_LEVEL: ${{ vars.TIKTOK_PRIVACY_LEVEL || 'SELF_ONLY' }}
-          # --- Bloc 7bis (YouTube Shorts auto — DÉSACTIVÉ : dépôt Drive uniquement) ---
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_UPLOAD_ENABLE: ${{ vars.YOUTUBE_UPLOAD_ENABLE || 'false' }}
-          # --- Marchés / dossiers Drive (fr => nouvelle chaîne, intl => chaîne existante) ---
+          # --- Jeux (modifiable dans Settings > Variables, sans code) ---
+          # nom EXACT de la catégorie Twitch, séparés par des virgules
+          GAMES_PRIMARY: ${{ vars.GAMES_PRIMARY || 'Grand Theft Auto VI' }}
+          # complètent le quota si le prioritaire ne suffit pas ("" = prioritaires seulement)
+          GAMES_SECONDARY: ${{ vars.GAMES_SECONDARY || 'Grand Theft Auto V' }}
+          # --- Marchés / dossiers Drive (fr => chaîne FR, intl => chaîne EN) ---
           MARKETS: ${{ vars.MARKETS || 'fr,intl' }}
-          # purge auto des clips plus vieux que N heures (garde de la place)
-          DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
-          # --- Tuning qualité (modifiable dans Settings > Variables, sans code) ---
-          # ex. TWITCH_LANGUAGES=fr pour ne cibler que des sources francophones
           TWITCH_LANGUAGES: ${{ vars.TWITCH_LANGUAGES || 'fr,en' }}
-          # seuil de qualité des moments (0-100) : plus haut = moins de clips mais meilleurs
-          GEMINI_MIN_SCORE: ${{ vars.GEMINI_MIN_SCORE || '78' }}
-          # chaînes à exclure (séparées par des virgules)
+          CLIPS_PER_MARKET: ${{ vars.CLIPS_PER_MARKET || '3' }}
+          MAX_CLIPS_PER_RUN: ${{ vars.MAX_CLIPS_PER_RUN || '6' }}
+          DRIVE_CLEANUP_MAX_AGE_H: ${{ vars.DRIVE_CLEANUP_MAX_AGE_H || '48' }}
+          # --- Sélection des clips ---
+          TWITCH_CLIPS_DAYS: ${{ vars.TWITCH_CLIPS_DAYS || '3' }}
+          TWITCH_CLIP_MIN_VIEWS: ${{ vars.TWITCH_CLIP_MIN_VIEWS || '100' }}
+          MAX_CLIPS_PER_STREAMER: ${{ vars.MAX_CLIPS_PER_STREAMER || '2' }}
+          # note mini (0-100) donnée par le LLM après avoir regardé le clip
+          CLIP_MIN_SCORE: ${{ vars.CLIP_MIN_SCORE || '55' }}
           CHANNEL_BLACKLIST: ${{ vars.CHANNEL_BLACKLIST || '' }}
-          # cadrage : auto | face | blur
-          FRAMING: ${{ vars.FRAMING || 'auto' }}
-          # --- Source Twitch Clips (moments déjà viraux) ---
-          TWITCH_SOURCE: ${{ vars.TWITCH_SOURCE || 'clips' }}
-          # ne garder que les clips au-dessus de N vues (ex. 500 = gros clips only)
-          TWITCH_CLIP_MIN_VIEWS: ${{ vars.TWITCH_CLIP_MIN_VIEWS || '50' }}
-          # jeux/catégories exclus (sous-chaîne, séparés par des virgules). Vide = tout autoriser.
-          TWITCH_GAME_BLACKLIST: ${{ vars.TWITCH_GAME_BLACKLIST || 'grand theft auto' }}
-          # diversité : max de clips gardés par jeu
-          TWITCH_MAX_CLIPS_PER_GAME: ${{ vars.TWITCH_MAX_CLIPS_PER_GAME || '3' }}
           # --- Mode campagne (clips payés à la vue) : créateurs ciblés en priorité ---
-          # ex. TARGET_STREAMERS_TWITCH=kaicenat,ponce  |  TARGET_ONLY=true => uniquement eux
           TARGET_STREAMERS_TWITCH: ${{ vars.TARGET_STREAMERS_TWITCH || '' }}
           TARGET_CHANNELS_KICK: ${{ vars.TARGET_CHANNELS_KICK || '' }}
           TARGET_ONLY: ${{ vars.TARGET_ONLY || 'false' }}
-          # --- Titre : outline (gros texte blanc/jaune contour noir) | box (boîtes blanches natives TikTok) ---
+          # --- Rendu ---
+          FRAMING: ${{ vars.FRAMING || 'auto' }}
           TITLE_STYLE: ${{ vars.TITLE_STYLE || 'outline' }}
-          # fenêtre de fraîcheur des clips, en jours
-          TWITCH_CLIPS_DAYS: ${{ vars.TWITCH_CLIPS_DAYS || '7' }}
-          # objectif de clips PAR chaîne (fr + intl) — chaque marché a sa place réservée
-          CLIPS_PER_MARKET: ${{ vars.CLIPS_PER_MARKET || '3' }}
-          MAX_CLIPS_PER_RUN: ${{ vars.MAX_CLIPS_PER_RUN || '6' }}
-          # YouTube comme source : off par defaut (anti-bot en CI). Mets 'true' + cookies pour l'activer.
-          YOUTUBE_SOURCE_ENABLE: ${{ vars.YOUTUBE_SOURCE_ENABLE || 'false' }}
+          WHISPER_MODEL: ${{ vars.WHISPER_MODEL || 'large-v3-turbo' }}
           # --- Notification e-mail (récap des clips déposés) ---
           NOTIFY_EMAIL_ENABLE: ${{ vars.NOTIFY_EMAIL_ENABLE || 'true' }}
           NOTIFY_EMAIL_TO: ${{ vars.NOTIFY_EMAIL_TO || 'ce.boutajar@gmail.com' }}
@@ -147,6 +126,7 @@ jobs:
           name: pipeline-debug
           path: |
             work/candidates.json
-            pipeline.log
+            work/pipeline.log
+            work/rapport.md
           if-no-files-found: ignore
           retention-days: 5

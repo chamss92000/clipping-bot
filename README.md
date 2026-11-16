@@ -1,91 +1,72 @@
-# clipping-bot
+# clipping-bot — clips gaming, focus GTA 6
 
-Pipeline de clipping **100 % automatisé, budget 0 €** : détecte les vidéos les
-plus chaudes (YouTube / Twitch / Kick), extrait les moments viraux (LLM),
-recadre en 9:16 avec face-tracking, ajoute des sous-titres animés et publie sur
-TikTok — sans intervention humaine. Tourne sur **GitHub Actions** (cron 6h) et
-persiste son état sur **Google Drive**.
+Pipeline de clipping **100 % automatisé, budget 0 €**, centré sur **un seul type
+de contenu** : les clips gaming déjà viraux (Twitch / Kick), en priorité sur
+**GTA 6**. Il récupère les meilleurs moments du jour, les fait juger par une IA
+qui **regarde** le clip, les remonte en 9:16 avec sous-titres animés et titre
+d'accroche, puis les dépose sur Google Drive (ou publie sur TikTok).
+Tourne sur **GitHub Actions** (2 runs/jour) et persiste son état sur Drive.
 
-## Architecture (bloc par bloc)
+## Pipeline
 
-| Bloc | Rôle | Stack | Statut |
-|------|------|-------|--------|
-| 1 | Détection tendances | YouTube Data API v3, Twitch Helix, Kick API | ✅ |
-| 2 | Téléchargement + storage | yt-dlp, Google Drive API (OAuth drive.file) | ✅ |
-| 3 | Transcription | openai-whisper (base, CPU) | ✅ |
-| 4 | Moments viraux | Gemini (gemini-flash-latest) | ✅ |
-| 5 | Découpe + recadrage 9:16 | FFmpeg + suivi de visage | ✅ |
-| 6 | Sous-titres animés | ASS + FFmpeg | ✅ |
-| 7 | Publication TikTok | API officielle Content Posting (gratuite) | ✅ |
-| 8 | Orchestration | GitHub Actions (cron 6h) | ✅ |
+| Étape | Rôle | Stack |
+|------|------|-------|
+| 1. Détection | Clips les plus vus **par jeu** (API Clips Twitch `game_id`) + chaînes Kick filtrées par jeu. Anti-doublon de moment, max N clips/streamer | Twitch Helix, Kick (best-effort) |
+| 2. Téléchargement | Clip entier ≤ 1080p | yt-dlp |
+| 3. Brief IA | Gemini **regarde** le clip (vidéo 360p + son) : note 0-100, recadrage (coupe le début mou), 3 titres de formules différentes, légende SEO, hashtags | Gemini Flash (gratuit), chaîne de repli |
+| 4. Filtre | Note < `CLIP_MIN_SCORE` => clip écarté (avant la transcription : 0 temps perdu) | — |
+| 5. Sous-titres | Transcription mot à mot, VAD anti-hallucination, vocabulaire GTA | faster-whisper `large-v3-turbo` (local) |
+| 6. Montage | 9:16 auto (facecam+gameplay / visage / fond flou), sous-titres karaoké, titre animé | FFmpeg, MediaPipe, Pillow |
+| 7. Livraison | Drive (dossier FR / intl) + rapport + e-mail, ou TikTok API / YouTube Shorts | Drive API |
 
-## Structure
+## Choisir les jeux
 
-```
-clipping-bot/
-├── .github/workflows/pipeline.yml   # cron 6h + dispatch manuel
-├── config/settings.py               # toute la config + validation par bloc
-├── src/
-│   ├── models.py                    # VideoCandidate, Platform
-│   ├── utils/                       # logging + retry (backoff exponentiel)
-│   ├── detection/                   # BLOC 1 : youtube / twitch / kick + agrégateur
-│   ├── downloader/                  # BLOC 2
-│   ├── storage/                     # BLOC 2 : Drive + state.json
-│   ├── transcription/               # BLOC 3
-│   ├── viral/                       # BLOC 4
-│   ├── editing/                     # BLOCS 5 & 6
-│   └── publisher/                   # BLOC 7
-└── main.py                          # orchestrateur
-```
+Dans *Settings → Secrets and variables → Actions → Variables* (sans toucher au code) :
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `GAMES_PRIMARY` | `Grand Theft Auto VI` | Jeux prioritaires (nom **exact** de la catégorie Twitch), bonus de score |
+| `GAMES_SECONDARY` | `Grand Theft Auto V` | Complètent le quota les jours creux. `""` = prioritaires seulement |
+| `CLIP_MIN_SCORE` | `55` | Note IA mini. Monte à 65-70 pour être plus exigeant |
+| `TWITCH_CLIPS_DAYS` | `3` | Fraîcheur des clips |
+| `TWITCH_CLIP_MIN_VIEWS` | `100` | Vues mini d'un clip |
+| `MAX_CLIPS_PER_STREAMER` | `2` | Diversité |
+| `CLIPS_PER_MARKET` | `3` | Clips par chaîne (FR / intl) et par run |
 
 ## Installation (dev local)
 
 ```bash
-cd clipping-bot
-python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env                                 # puis renseigner les clés
+cp .env.example .env          # puis renseigner les clés
+python -m pytest -q tests     # tests rapides, sans réseau
 ```
 
-FFmpeg est requis (binaire système) : `sudo apt install ffmpeg` / `choco install ffmpeg`.
+FFmpeg est requis : `sudo apt install ffmpeg` / `choco install ffmpeg`.
 
-## Tester le Bloc 1 (détection)
+## Tester chaque étape
 
 ```bash
-# Toutes les sources (respecte les clés présentes dans .env) :
-python -m src.detection
-
-# Une ou deux sources ciblées :
-python -m src.detection youtube
-python -m src.detection twitch kick
-
-# Chaque module isolément :
-python -m src.detection.youtube
-python -m src.detection.twitch
-python -m src.detection.kick
-
-# Sortie JSON brute :
-python -m src.detection --json
-
-# Via l'orchestrateur (dump dans work/candidates.json) :
-python main.py --detect-only
+python -m src.detection                 # classement des clips détectés
+python main.py --detect-only            # idem + dump work/candidates.json
+python -m src.downloader.download <url_du_clip>
+python -m src.viral.gemini clip.mp4 "Grand Theft Auto VI" fr   # brief IA d'un clip local
+python -m src.editing.title_card "Il vole un jet dans GTA 6"
+DRY_RUN=true python main.py             # cycle complet sans publier
 ```
-
-> Kick n'a pas d'API officielle et est protégé par Cloudflare : le module est
-> best-effort et renvoie une liste vide sans casser le pipeline s'il est bloqué.
 
 ## Secrets GitHub Actions
 
-À définir dans *Settings → Secrets and variables → Actions* :
-`YOUTUBE_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `GEMINI_API_KEY`,
-`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`,
-`TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`.
+`TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `GEMINI_API_KEY` (gratuit sur
+aistudio.google.com), `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+`GOOGLE_OAUTH_REFRESH_TOKEN` ; optionnels : `TIKTOK_*`, `YOUTUBE_REFRESH_TOKEN`,
+`SMTP_USER`, `SMTP_PASSWORD`.
 
-Auth OAuth (une fois, en local) : `python -m src.storage.authorize` (Drive) et
-`python -m src.publisher.authorize_tiktok` (TikTok).
+Auth OAuth (une fois, en local) : `python -m src.storage.authorize` (Drive),
+`python -m src.publisher.authorize_tiktok`, `python -m src.publisher.authorize_youtube`.
 
-## Contraintes
+## Modèles IA (gratuits)
 
-Budget 0 € (free tiers + open source) · tout sur GitHub Actions (2000 min/mois) ·
-état persistant sur Google Drive · code modulaire et testable bloc par bloc ·
-retries + fallback + logs sur chaque bloc · Python 3.11+.
+* **Titres / note / légende** : `GEMINI_MODELS` = `gemini-flash-latest,gemini-flash-lite-latest`
+  (essayés dans l'ordre ; repli automatique si un modèle est retiré ou à court de quota).
+* **Sous-titres** : Whisper `large-v3-turbo` en local (CPU, aucun quota). `WHISPER_MODEL=medium` pour revenir en arrière.

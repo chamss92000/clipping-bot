@@ -18,6 +18,7 @@ import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
+from html import escape as html_escape
 
 from config import settings
 from src.utils.logging import get_logger
@@ -104,15 +105,15 @@ def build_clips_email(clips: list[dict], folder_ids: dict[str, str | None]) -> t
         text.append(f"== {head} ==" + (f"  {url}" if url else ""))
         html.append("<ul style='margin:0;padding-left:18px'>")
         for c in mk_clips:
-            hook = c.get("hook", "(sans titre)")
-            tags = " ".join(c.get("hashtags") or [])
-            fname = c.get("clip", "")
+            hook = html_escape(c.get("hook", "(sans titre)"))
+            caption = c.get("caption") or f"{c.get('hook', '')} {' '.join(c.get('hashtags') or [])}"
+            fname = html_escape(c.get("clip", ""))
             html.append(
                 f"<li style='margin:6px 0'><b>{hook}</b><br>"
                 f"<span style='color:#555'>fichier : <code>{fname}</code></span><br>"
-                f"<span style='color:#555'>légende : {hook} {tags}</span></li>"
+                f"<span style='color:#555;white-space:pre-line'>légende : {html_escape(caption)}</span></li>"
             )
-            text.append(f"- {hook}\n  fichier : {fname}\n  légende : {hook} {tags}")
+            text.append(f"- {c.get('hook', '')}\n  fichier : {c.get('clip', '')}\n  légende : {caption}")
         html.append("</ul>")
         text.append("")
 
