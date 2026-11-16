@@ -67,6 +67,6 @@ Auth OAuth (une fois, en local) : `python -m src.storage.authorize` (Drive),
 
 ## Modèles IA (gratuits)
 
-* **Titres / note / légende** : `GEMINI_MODELS` = `gemini-flash-latest,gemini-2.5-flash,gemini-flash-lite-latest`
+* **Titres / note / légende** : `GEMINI_MODELS` = `gemini-flash-latest,gemini-flash-lite-latest`
   (essayés dans l'ordre ; repli automatique si un modèle est retiré ou à court de quota).
 * **Sous-titres** : Whisper `large-v3-turbo` en local (CPU, aucun quota). `WHISPER_MODEL=medium` pour revenir en arrière.

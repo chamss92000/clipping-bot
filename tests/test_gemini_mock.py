@@ -41,12 +41,13 @@ def fake(monkeypatch, tmp_path):
         "model-b": payload,
     }
     models = _FakeModels(script)
-    monkeypatch.setattr("google.genai.Client", lambda api_key: SimpleNamespace(models=models))
+    monkeypatch.setattr("google.genai.Client", lambda api_key, http_options=None: SimpleNamespace(models=models))
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "x")
     monkeypatch.setattr(settings, "GEMINI_MODELS", ["model-a", "model-b"])
     monkeypatch.setattr(settings, "GEMINI_SEND_VIDEO", False)
     monkeypatch.setattr(settings, "GEMINI_MIN_INTERVAL_S", 0.0)
     monkeypatch.setattr(gemini, "_chain_failures", 0)
+    monkeypatch.setattr(gemini, "_model_strikes", {})
     return models
 
 
@@ -62,6 +63,10 @@ def test_analyze_clip_fallback_and_selection(fake):
     assert (b.start, b.end) == (3.2, 27.0)
     assert b.hashtags[:2] == ["#GTA6", "#squeezie"]
     assert "Vice City" in b.description
+    # modèle 404 mis de côté : le clip suivant ne le rappelle plus
+    gemini.analyze_clip("unused.mp4", 30.0, title="t", creator="Squeezie",
+                        game="Grand Theft Auto VI", lang="fr")
+    assert fake.calls == ["model-a", "model-b", "model-b"]
 
 
 def test_analyze_clip_never_raises(monkeypatch):

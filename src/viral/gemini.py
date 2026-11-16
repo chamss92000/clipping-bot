@@ -125,6 +125,10 @@ Contexte du clip :
      INTERDIT : je, j', moi, mon, ma, mes, on, nous / I, I'm, my, me, we, us.
    - pas de guillemets, pas d'emoji, pas de point final ("?" autorisé).
    - mettre "{game_short}" dans le titre quand c'est naturel (les gens cherchent "{game_short}").
+   - N'INVENTE RIEN : ne cite un lieu, un perso ou un jeu que si tu l'as réellement vu ou
+     entendu. La catégorie du stream peut être fausse : si ce que tu vois n'est PAS
+     {game_short} (autre jeu, serveur RP d'un autre GTA, réaction, discussion…), dis-le dans
+     `what_happens` et n'écris ni "{game_short}" ni ses lieux/persos dans le titre.
    Formules possibles : POV · question intrigante · "Quand…" · contraste ("Il pensait que…") ·
    chiffre concret · découverte ("Ce détail caché de…") · pseudo du streamer + situation ·
    réaction ("Sa réaction quand…").
@@ -323,21 +327,37 @@ def _make_proxy(video: Path, out: Path) -> Path | None:
     return out
 
 
+#: Santé des modèles PENDANT le cycle : un modèle retiré (404) ou qui échoue /
+#: dépasse le délai 2 fois de suite est mis de côté (sinon chaque clip repaie
+#: l'attente — constaté : flash surchargé = 3 à 11 min par appel).
+_model_strikes: dict[str, int] = {}
+_MAX_MODEL_STRIKES = 2
+
+
+def _usable_models() -> list[str]:
+    ok = [m for m in settings.GEMINI_MODELS if _model_strikes.get(m, 0) < _MAX_MODEL_STRIKES]
+    return ok
+
+
 def _generate(contents: list, temperature: float) -> tuple[_BriefSchema, str]:
-    """Essaie chaque modèle de la chaîne. Retourne (brief, nom du modèle)."""
+    """Essaie chaque modèle encore sain de la chaîne. Retourne (brief, modèle)."""
     from google import genai
     from google.genai import errors, types
 
     if not settings.GEMINI_API_KEY:
         raise settings.ConfigError("GEMINI_API_KEY manquant")
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        # Délai dur par appel (ms) : au-delà on passe au modèle suivant.
+        http_options=types.HttpOptions(timeout=int(settings.GEMINI_TIMEOUT_S * 1000)),
+    )
     config = types.GenerateContentConfig(
         temperature=temperature,
         response_mime_type="application/json",
         response_schema=_BriefSchema,
     )
     last_exc: Exception | None = None
-    for model in settings.GEMINI_MODELS:
+    for model in _usable_models():
         for attempt in range(2):
             _rate_limit()
             try:
@@ -346,6 +366,7 @@ def _generate(contents: list, temperature: float) -> tuple[_BriefSchema, str]:
                 if parsed is None:
                     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", (resp.text or "").strip())
                     parsed = _BriefSchema.model_validate(json.loads(raw))
+                _model_strikes[model] = 0
                 return parsed, model
             except errors.ClientError as exc:
                 last_exc = exc
@@ -353,16 +374,24 @@ def _generate(contents: list, temperature: float) -> tuple[_BriefSchema, str]:
                     log.info("Viral: %s quota/minute atteint — pause 35 s.", model)
                     time.sleep(35)
                     continue
-                # 404 = modèle retiré/inconnu, 429 persistant = quota du jour, 400 = refus
+                if exc.code == 404:  # modèle retiré : inutile de le réessayer
+                    _model_strikes[model] = _MAX_MODEL_STRIKES
+                else:
+                    _model_strikes[model] = _model_strikes.get(model, 0) + 1
                 log.warning("Viral: %s indisponible (%s) — modèle suivant.", model, exc.code)
                 break
             except errors.ServerError as exc:
                 last_exc = exc
-                log.warning("Viral: %s erreur serveur (%s) — nouvel essai.", model, exc.code)
-                time.sleep(5)
-            except Exception as exc:  # noqa: BLE001 - JSON invalide, réseau…
+                log.warning("Viral: %s erreur serveur (%s).", model, exc.code)
+                if attempt == 0:
+                    time.sleep(4)
+                    continue
+                _model_strikes[model] = _model_strikes.get(model, 0) + 1
+            except Exception as exc:  # noqa: BLE001 - délai dépassé, JSON invalide, réseau…
                 last_exc = exc
-                log.warning("Viral: %s réponse inexploitable (%s).", model, exc)
+                _model_strikes[model] = _model_strikes.get(model, 0) + 1
+                log.warning("Viral: %s sans réponse exploitable (%s: %s) — modèle suivant.",
+                            model, type(exc).__name__, str(exc)[:120])
                 break
     raise RuntimeError(f"aucun modèle Gemini n'a répondu ({last_exc})")
 

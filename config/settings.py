@@ -278,12 +278,16 @@ WHISPER_HOTWORDS: str = _get(
 # ---------------------------------------------------------------------------
 # Gemini REGARDE le clip (vidéo basse définition + audio) : il comprend l'action
 # de gameplay même sans dialogue, ce qu'un LLM texte seul ne peut pas faire.
-# Chaîne de modèles essayés dans l'ordre (repli sur 404 = modèle retiré, ou 429 =
-# quota). "-latest" = alias Google qui suit le dernier Flash (pas de maintenance).
+# Chaîne de modèles essayés dans l'ordre (repli sur 404 = modèle retiré, 429 =
+# quota, délai dépassé). Uniquement des alias "-latest" : Google les fait
+# pointer sur le dernier modèle, donc jamais de 404 quand une version est retirée.
 GEMINI_MODELS: list[str] = _get_list(
     "GEMINI_MODELS",
-    [_get("GEMINI_MODEL") or "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"],
+    [_get("GEMINI_MODEL") or "gemini-flash-latest", "gemini-flash-lite-latest"],
 )
+#: Délai max d'UN appel (s). Flash répond normalement en 10-30 s ; surchargé il
+#: peut mettre plus de 10 min => on bascule sur le modèle suivant.
+GEMINI_TIMEOUT_S: float = _get_float("GEMINI_TIMEOUT_S", 75.0)
 #: Envoie la vidéo du clip au modèle (sinon : titre + transcription seuls).
 GEMINI_SEND_VIDEO: bool = _get_bool("GEMINI_SEND_VIDEO", True)
 #: Espacement minimal entre deux appels (free tier ~10 req/min sur Flash).
