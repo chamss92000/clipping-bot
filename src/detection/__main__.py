@@ -2,7 +2,7 @@
 
 Usage :
     python -m src.detection                 # toutes les sources
-    python -m src.detection youtube twitch  # sous-ensemble
+    python -m src.detection twitch          # une seule source
     python -m src.detection --json          # sortie JSON brute
 
 Valide seulement les secrets des sources demandées, exécute la détection et
@@ -58,12 +58,9 @@ def main(argv: list[str]) -> int:
 
     print(f"\n=== {len(candidates)} candidats détectés ===\n")
     for i, c in enumerate(candidates, 1):
-        extra = ""
-        if c.platform in (Platform.TWITCH, Platform.KICK):
-            extra = f" live={c.extra.get('live_viewer_count')}"
         print(
-            f"{i:>2}. [{c.platform.value:<7}] score={c.score:6.2f} "
-            f"vues={c.views:>10,}{extra}"
+            f"{i:>2}. [{c.platform.value:<6}] score={c.score:6.2f} "
+            f"vues={c.views:>8,} | {c.extra.get('game_name')} | {c.extra.get('language')}"
         )
         print(f"    {c.creator} — {c.title[:72]}")
         print(f"    {c.url}  ({c.duration_s}s)\n")

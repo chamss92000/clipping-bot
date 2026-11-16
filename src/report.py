@@ -1,33 +1,21 @@
-"""Rapport de run — déposé sur Drive à chaque cycle.
+"""Rapport de run — déposé sur Drive à chaque cycle (`rapport.md`, écrasé).
 
-Objectif : pouvoir **vérifier les sources choisies** sans lire les logs GitHub.
-Le fichier `rapport.md` est écrasé à chaque run (dernier état) et contient :
-  * le classement des sources détectées avec leur signal de tendance,
-  * les sources écartées par le filtre qualité (et pourquoi),
-  * la source retenue et les clips produits (accroche, score viral, YouTube).
+Contient : les clips produits (titre retenu + alternatives + légende prête à
+copier), les clips écartés par le LLM (note + pourquoi), le classement des
+candidats et les clips écartés à la détection.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from config import settings
-from src.models import Platform, VideoCandidate
+from src.models import VideoCandidate
 
 
 def _signal(c: VideoCandidate) -> str:
-    """Signal de tendance lisible selon la plateforme."""
-    if c.platform == Platform.YOUTUBE:
-        vph = c.extra.get("views_per_hour")
-        age = c.extra.get("age_hours")
-        if vph is not None:
-            return f"{vph:,} vues/h · {c.views:,} vues · {age}h".replace(",", " ")
-        return f"{c.views:,} vues".replace(",", " ")
-    live = c.extra.get("live_viewer_count")
-    if live is not None:
-        return f"{live:,} viewers live · {c.views:,} vues VOD".replace(",", " ")
-    return f"{c.views:,} vues".replace(",", " ")
+    return f"{c.views:,} vues · {c.extra.get('game_name') or '?'} · {c.extra.get('language') or '?'}".replace(",", " ")
 
 
 def _local_now() -> str:
@@ -36,7 +24,7 @@ def _local_now() -> str:
 
         return datetime.now(ZoneInfo(settings.TIMEZONE)).strftime("%d/%m/%Y %H:%M")
     except Exception:  # noqa: BLE001
-        return datetime.utcnow().strftime("%d/%m/%Y %H:%M UTC")
+        return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
 
 def build_report(
@@ -44,86 +32,72 @@ def build_report(
     rejected: list[tuple[VideoCandidate, str]],
     chosen: list[VideoCandidate],
     clips: list[dict[str, Any]],
-    youtube_left: int,
-    top_n: int = 10,
+    llm_rejected: list[tuple[VideoCandidate, dict]] | None = None,
+    top_n: int = 15,
 ) -> str:
-    lines: list[str] = []
-    lines.append(f"# Rapport clipping-bot — {_local_now()}")
-    lines.append("")
+    lines: list[str] = [f"# Rapport clipping-bot — {_local_now()}", ""]
+    folder = {"fr": settings.DRIVE_ROOT_FOLDER_NAME_FR, "intl": settings.DRIVE_ROOT_FOLDER_NAME}
 
-    # --- Clips produits (le plus important en premier) ---
-    # Groupés par marché : chaque marché = un dossier Drive = une chaîne.
-    _folder = {
-        "fr": settings.DRIVE_ROOT_FOLDER_NAME_FR,
-        "intl": settings.DRIVE_ROOT_FOLDER_NAME,
-    }
-    lines.append(f"## Clips produits ({len(clips)})")
-    lines.append("")
-    lines.append("_Copie/colle le hook + les hashtags ci-dessous en légende quand tu postes._")
-    lines.append("")
+    lines += [f"## Clips produits ({len(clips)})", "",
+              "_Légende prête à copier/coller. Les titres alternatifs servent si tu veux varier._", ""]
     if clips:
         for mk in ("fr", "intl"):
             mk_clips = [c for c in clips if (c.get("market") or "intl") == mk]
             if not mk_clips:
                 continue
             label = "🇫🇷 Français" if mk == "fr" else "🌍 International"
-            lines.append(f"### {label} — dossier Drive `{_folder.get(mk, mk)}/clips`")
-            lines.append("")
+            lines += [f"### {label} — dossier Drive `{folder.get(mk, mk)}/clips`", ""]
             for c in mk_clips:
-                tags = " ".join(c.get("hashtags") or [])
-                lines.append(f"- **{c.get('hook','(sans titre)')}**")
-                lines.append(f"  - fichier : `{c.get('clip')}`")
-                lines.append(f"  - légende : {c.get('hook','')} {tags}".rstrip())
-                yt = c.get("youtube")
-                if yt:
-                    yt_txt = {
-                        "posted": "✅ publié sur YouTube Shorts",
-                        "failed": "❌ échec YouTube",
-                        "dry_run": "🧪 simulé (dry-run)",
-                    }.get(yt, str(yt))
-                    lines.append(f"  - YouTube : {yt_txt}")
+                score = c.get("score")
+                lines.append(f"- **{c.get('hook', '(sans titre)')}**"
+                             + (f" — note {score:.0f}/100" if score is not None else ""))
+                lines.append(f"  - fichier : `{c.get('clip')}` · {c.get('game') or ''} · {c.get('creator') or ''}")
+                if c.get("alternatives"):
+                    lines.append(f"  - autres titres : {' / '.join(c['alternatives'])}")
+                lines.append("  - légende :")
+                lines.append("")
+                lines.append("    ```")
+                lines += [f"    {ln}" for ln in (c.get("caption") or "").splitlines()]
+                lines.append("    ```")
+                if c.get("source_url"):
+                    lines.append(f"  - source : {c['source_url']}")
+                if c.get("youtube"):
+                    lines.append(f"  - YouTube : {c['youtube']}")
             lines.append("")
     else:
-        lines.append("_Aucun clip produit lors de ce cycle._")
+        lines += ["_Aucun clip produit lors de ce cycle._", ""]
+
+    if llm_rejected:
+        lines += [f"## Clips écartés par le LLM ({len(llm_rejected)})", "",
+                  f"_Note < {settings.CLIP_MIN_SCORE:.0f}/100 (réglable : variable CLIP_MIN_SCORE)._", ""]
+        for c, brief in llm_rejected:
+            lines.append(f"- {brief.get('score', 0):.0f}/100 · **{c.creator}** — {c.title[:60]}")
+            if brief.get("what_happens"):
+                lines.append(f"  - _{brief['what_happens']}_")
         lines.append("")
 
-    # --- Source(s) retenue(s) ---
-    lines.append("## Source(s) traitée(s)")
-    lines.append("")
-    if chosen:
-        for c in chosen:
-            lines.append(f"- **{c.creator}** — {c.title}")
-            lines.append(f"  - {c.platform.value} · score tendance **{c.score}/100** · {_signal(c)}")
-            lines.append(f"  - {c.url}")
-    else:
-        lines.append("_Aucune source traitée._")
+    lines += ["## Clips essayés ce cycle", ""]
+    for c in chosen:
+        lines.append(f"- **{c.creator}** — {c.title[:70]} · score {c.score} · {_signal(c)} · {c.url}")
+    if not chosen:
+        lines.append("_Aucun._")
     lines.append("")
 
-    # --- Classement des candidats ---
-    lines.append(f"## Sources les plus tendances détectées (top {top_n})")
-    lines.append("")
-    lines.append("| # | Score | Plateforme | Créateur | Signal | Titre |")
-    lines.append("|---|-------|-----------|----------|--------|-------|")
+    lines += [f"## Meilleurs candidats détectés (top {top_n})", "",
+              "| # | Score | Plateforme | Jeu | Créateur | Vues | Titre |",
+              "|---|-------|-----------|-----|----------|------|-------|"]
     for i, c in enumerate(candidates[:top_n], 1):
-        title = (c.title or "").replace("|", "/")[:60]
-        lines.append(
-            f"| {i} | {c.score} | {c.platform.value} | {c.creator} | {_signal(c)} | {title} |"
-        )
+        title = (c.title or "").replace("|", "/")[:50]
+        lines.append(f"| {i} | {c.score} | {c.platform.value} | {c.extra.get('game_name') or ''} "
+                     f"| {c.creator} | {c.views} | {title} |")
     lines.append("")
 
-    # --- Sources écartées ---
-    lines.append(f"## Sources écartées par le filtre qualité ({len(rejected)})")
-    lines.append("")
-    if rejected:
-        for c, reason in rejected[:20]:
-            lines.append(f"- ~~{c.creator} — {(c.title or '')[:60]}~~ → _{reason}_")
-    else:
-        lines.append("_Aucune._")
-    lines.append("")
-
-    lines.append("---")
-    lines.append(
-        "_Score de tendance 0-100 : vélocité (vues/heure) pour YouTube, "
-        "audience live pour Twitch/Kick — échelle commune aux 3 plateformes._"
-    )
+    lines += [f"## Écartés à la détection ({len(rejected)})", ""]
+    for c, reason in rejected[:25]:
+        lines.append(f"- ~~{c.creator} — {(c.title or '')[:60]}~~ → _{reason}_")
+    if not rejected:
+        lines.append("_Aucun._")
+    lines += ["", "---",
+              "_Score de détection : vélocité (vues/heure) du clip + bonus jeu prioritaire "
+              f"(+{settings.PRIMARY_GAME_BOOST:.0f}). Note LLM : potentiel viral jugé en regardant le clip._"]
     return "\n".join(lines) + "\n"

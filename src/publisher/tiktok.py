@@ -53,9 +53,13 @@ class PublishError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Caption + planification
 # ---------------------------------------------------------------------------
-def build_caption(hook: str, hashtags: list[str]) -> str:
+def build_caption(hook: str, hashtags: list[str], description: str = "") -> str:
+    """Légende TikTok : titre, phrase descriptive (mots-clés = recherche), hashtags."""
     tags = " ".join(h if h.startswith("#") else f"#{h}" for h in hashtags)
-    caption = f"{hook.strip()}\n\n{tags}".strip() if tags else hook.strip()
+    body = hook.strip()
+    if description and description.strip().lower() != body.lower():
+        body = f"{body}\n{description.strip()}"
+    caption = f"{body}\n\n{tags}".strip() if tags else body
     return caption[:_MAX_CAPTION]
 
 

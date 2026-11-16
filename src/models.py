@@ -16,7 +16,6 @@ from typing import Any
 class Platform(str, Enum):
     """Plateforme source d'une vidéo candidate."""
 
-    YOUTUBE = "youtube"
     TWITCH = "twitch"
     KICK = "kick"
 
@@ -35,7 +34,7 @@ class VideoCandidate:
     """
 
     platform: Platform
-    source_id: str  # id natif de la plateforme (videoId YouTube, id VOD Twitch/Kick)
+    source_id: str  # id natif du clip sur la plateforme
     url: str
     title: str
     creator: str

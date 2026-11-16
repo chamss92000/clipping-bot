@@ -43,6 +43,10 @@ POWER_WORDS = {
     "jamais", "personne", "tout", "rien", "secret", "choc", "fou", "folle", "dernier",
     "dernière", "première", "vraie", "vrai", "interdit", "viré", "quitte", "perd", "gagne",
     "craque", "explose", "hurle", "piège", "incroyable", "énorme", "seul", "seule",
+    # Gaming / GTA
+    "gta", "gta6", "gtavi", "vice", "leonida", "lucia", "jason", "police", "cops", "flics",
+    "wanted", "bug", "glitch", "easter", "caché", "cachée", "braquage", "heist", "crash",
+    "speedrun", "record", "1v5", "clutch",
 }
 
 

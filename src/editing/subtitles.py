@@ -57,15 +57,43 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{settings.SUB_FONT},{settings.SUB_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&H80000000,-1,0,0,0,100,100,0,0,1,{settings.SUB_OUTLINE_WIDTH},{settings.SUB_SHADOW},2,60,60,{settings.SUB_MARGIN_V},1
-Style: Title,{settings.SUB_FONT},{settings.TITLE_FONT_SIZE},{settings.SUB_PRIMARY_COLOR},&H000000FF,{settings.SUB_OUTLINE_COLOR},&HB0000000,-1,0,0,0,100,100,0,0,{3 if settings.TITLE_BOX else 1},6,2,8,80,80,{settings.TITLE_MARGIN_V},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def _chunk_words(words: list[Word], n: int) -> list[list[Word]]:
-    return [words[i : i + n] for i in range(0, len(words), n)]
+#: Fin de phrase : on ne regroupe jamais des mots de part et d'autre.
+_SENTENCE_END = (".", "!", "?", "…")
+
+
+def chunk_words(
+    words: list[Word], max_words: int, max_chars: int = 18, max_gap: float = 0.6
+) -> list[list[Word]]:
+    """Groupes de mots affichés ensemble. On coupe :
+      * à max_words mots, ou si la ligne dépasserait max_chars (sinon retour à
+        la ligne => sous-titre sur 2 lignes qui masque l'action) ;
+      * après une fin de phrase (lecture naturelle) ;
+      * sur une pause > max_gap s (le groupe ne reste pas affiché dans le vide).
+    """
+    chunks: list[list[Word]] = []
+    cur: list[Word] = []
+    for w in words:
+        if cur:
+            text_len = len(" ".join(x.word.strip() for x in cur + [w]))
+            prev = cur[-1]
+            if (
+                len(cur) >= max_words
+                or text_len > max_chars
+                or prev.word.strip().endswith(_SENTENCE_END)
+                or w.start - prev.end > max_gap
+            ):
+                chunks.append(cur)
+                cur = []
+        cur.append(w)
+    if cur:
+        chunks.append(cur)
+    return chunks
 
 
 #: Ponctuation retirée en début/fin de mot affiché (on garde ' et - internes).
@@ -109,67 +137,24 @@ def _normalize_words(words: list[Word]) -> list[Word]:
     return out
 
 
-def _title_text(title: str) -> str:
-    t = title.strip().replace("{", "(").replace("}", ")").replace("\n", " ")
-    if settings.TITLE_UPPERCASE:
-        t = t.upper()
-    return t
-
-
-#: Mots "punch" surlignés en jaune dans le titre (curiosité/émotion/chiffres).
-_POWER_WORDS = {
-    "stop", "never", "now", "free", "secret", "secrets", "best", "worst", "new",
-    "money", "rich", "ai", "fast", "instantly", "everyone", "nobody", "everything",
-    "nothing", "more", "less", "dangerous", "hack", "hacks", "trick", "tricks",
-    "mistake", "mistakes", "biggest", "only", "first", "last", "real", "truth",
-    "proven", "wrong", "right", "win", "lose", "hidden", "insane", "crazy", "ultimate",
-}
-
-
-def _title_markup(title: str) -> str:
-    """Titre en ASS avec les mots 'punch' colorés en jaune (le reste en blanc)."""
-    text = _title_text(title)
-    if not settings.TITLE_HIGHLIGHT:
-        return text
-    hl, primary = settings.SUB_HIGHLIGHT_COLOR, settings.SUB_PRIMARY_COLOR
-    words = text.split()
-    if not words:
-        return text
-    # Choisit les mots à surligner : "power words" + nombres ; à défaut, le plus long.
-    idx = {i for i, w in enumerate(words)
-           if w.strip(_STRIP_CHARS).lower() in _POWER_WORDS or any(c.isdigit() for c in w)}
-    if not idx:
-        idx = {max(range(len(words)), key=lambda i: len(words[i]))}
-    out = []
-    for i, w in enumerate(words):
-        if i in idx:
-            out.append(f"{{\\c{hl}}}{w}{{\\c{primary}}}")
-        else:
-            out.append(w)
-    return " ".join(out)
-
-
 def build_ass(
     words: list[Word],
     out_ass: str | Path,
     clip_offset: float = 0.0,
-    title: str | None = None,
     clip_duration: float | None = None,
 ) -> Path:
-    """Génère l'ASS : sous-titres mot-par-mot animés + titre fixe en haut.
+    """Génère l'ASS des sous-titres mot-par-mot (mot prononcé surligné + "pop").
 
-    :param title: hook affiché statiquement en haut, toute la durée du clip.
-    :param clip_duration: durée du clip (pour la fin de l'événement titre).
+    :param clip_offset: début du clip dans le référentiel des `words`.
+    :param clip_duration: durée du clip (on ignore les mots au-delà).
     """
     out_ass = Path(out_ass)
     out_ass.parent.mkdir(parents=True, exist_ok=True)
 
-    # Recale sur le clip et filtre les mots hors clip.
     rel: list[Word] = []
     for w in words:
-        s = w.start - clip_offset
-        e = w.end - clip_offset
-        if e <= 0:
+        s, e = w.start - clip_offset, w.end - clip_offset
+        if e <= 0 or (clip_duration is not None and s >= clip_duration):
             continue
         rel.append(Word(start=max(0.0, s), end=max(0.05, e), word=w.word))
     rel = _normalize_words(rel)
@@ -177,39 +162,33 @@ def build_ass(
     hl = settings.SUB_HIGHLIGHT_COLOR
     primary = settings.SUB_PRIMARY_COLOR
     events: list[str] = []
-
-    # Titre fixe en haut, sur toute la durée du clip.
-    if settings.TITLE_ENABLE and title:
-        end_t = clip_duration if clip_duration else (rel[-1].end if rel else 30.0)
-        events.append(
-            f"Dialogue: 0,{_ass_time(0)},{_ass_time(end_t + 0.5)},Title,,0,0,0,,{_title_markup(title)}"
-        )
-
-    for chunk in _chunk_words(rel, settings.SUB_MAX_WORDS_PER_LINE):
-        if not chunk:
-            continue
+    chunks = chunk_words(rel, settings.SUB_MAX_WORDS_PER_LINE, settings.SUB_MAX_CHARS_PER_LINE)
+    for ci, chunk in enumerate(chunks):
+        next_start = chunks[ci + 1][0].start if ci + 1 < len(chunks) else None
         for i, w in enumerate(chunk):
             start = w.start
-            # Prolonge jusqu'au mot suivant du groupe pour éviter le clignotement.
-            end = chunk[i + 1].start if i + 1 < len(chunk) else w.end + 0.15
+            # Prolonge jusqu'au mot suivant du groupe (pas de clignotement)…
+            end = chunk[i + 1].start if i + 1 < len(chunk) else w.end + 0.25
+            # …sans jamais chevaucher le groupe suivant (2 lignes à l'écran).
+            if next_start is not None:
+                end = min(end, next_start)
+            if clip_duration is not None:
+                end = min(end, clip_duration)
             if end <= start:
-                end = start + 0.1
-            # Construit la ligne : mot actif surligné, les autres en primaire.
+                end = start + 0.08
             parts = []
             for j, wj in enumerate(chunk):
                 token = _clean(wj.word)
                 if j == i:
-                    # Mot actif : couleur highlight + léger "pop" (scale 112%).
                     parts.append(f"{{\\c{hl}\\fscx112\\fscy112}}{token}{{\\c{primary}\\fscx100\\fscy100}}")
                 else:
                     parts.append(token)
-            text = " ".join(parts)
             events.append(
-                f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{text}"
+                f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{' '.join(parts)}"
             )
 
     out_ass.write_text(_ass_header() + "\n".join(events) + "\n", encoding="utf-8")
-    log.info("ASS: %d événements écrits -> %s", len(events), out_ass.name)
+    log.info("ASS: %d événements (%d groupes) -> %s", len(events), len(chunks), out_ass.name)
     return out_ass
 
 

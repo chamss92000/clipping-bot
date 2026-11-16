@@ -1,55 +1,44 @@
-"""Bloc 1 — Détection des tendances (YouTube + Twitch + Kick).
+"""Bloc 1 — Détection des clips gaming viraux (Twitch + Kick), focus GTA 6.
 
-Point d'entrée : `detect_all()` qui interroge les trois sources en isolation
-(l'échec d'une source ne casse jamais les autres), fusionne, dédoublonne et
-trie les candidats par score décroissant.
+Point d'entrée : `detect_all()` qui interroge les sources en isolation (l'échec
+d'une source ne casse jamais l'autre), filtre, dédoublonne et trie.
 
-Le score n'est pas comparable *tel quel* d'une plateforme à l'autre (échelles
-de vues différentes) ; on applique donc un léger poids par plateforme pour
-équilibrer la file finale, ajustable via la constante `_PLATFORM_WEIGHT`.
+Étapes de qualité (dans l'ordre) :
+  1. filtre titre/chaîne (retransmissions esport, contenu recyclé) ;
+  2. anti-doublon de MOMENT : le même passage clippé par plusieurs viewers
+     (même streamer, même VOD, offsets proches) => on garde le plus vu ;
+  3. diversité : au plus MAX_CLIPS_PER_STREAMER clips par streamer.
 """
 
 from __future__ import annotations
+
+from datetime import datetime
 
 from config import settings
 from src.models import Platform, VideoCandidate
 from src.utils.logging import get_logger
 
-from . import kick, twitch, youtube
+from . import kick, twitch
 
 log = get_logger("detection")
-
-#: Les scores sont maintenant sur une échelle 0-100 commune (vélocité YouTube /
-#: audience live Twitch-Kick), donc plus besoin de rééquilibrer. On garde juste
-#: une légère décote Kick (données moins fiables).
-_PLATFORM_WEIGHT: dict[Platform, float] = {
-    Platform.YOUTUBE: 1.0,
-    Platform.TWITCH: 1.0,
-    Platform.KICK: 0.95,
-}
 
 #: Sources écartées au dernier `detect_all` — [(candidat, raison)], pour le rapport.
 LAST_REJECTED: list[tuple[VideoCandidate, str]] = []
 
 _SOURCES = {
-    Platform.YOUTUBE: youtube.detect,
     Platform.TWITCH: twitch.detect,
     Platform.KICK: kick.detect,
 }
 
 
 def market_of(c: VideoCandidate) -> str:
-    """Classe une source dans un marché : "fr" (francophone) ou "intl".
+    """Classe un clip dans un marché : "fr" (francophone) ou "intl".
 
     Sert à router le clip vers le bon dossier Drive (=> la bonne chaîne).
-    Basé sur la langue quand elle est connue (Twitch clips, YouTube), sinon sur
-    un défaut par plateforme (Kick : liste de chaînes FR connues).
     """
     lang = (c.extra.get("language") or "").lower()
     if lang:
         return "fr" if lang.startswith("fr") else "intl"
-    if c.platform == Platform.YOUTUBE:
-        return "fr" if settings.YOUTUBE_REGION.upper() == "FR" else "intl"
     if c.platform == Platform.KICK:
         who = (c.extra.get("slug") or c.creator or "").lower()
         fr_set = {s.lower() for s in settings.KICK_FR_CHANNELS}
@@ -58,12 +47,7 @@ def market_of(c: VideoCandidate) -> str:
 
 
 def _is_low_quality(c: VideoCandidate) -> str | None:
-    """Retourne la raison du rejet si la source est du contenu 'recyclé', sinon None.
-
-    C'est le filtre le plus déterminant sur la qualité finale : un récap de film
-    ou une compilation ne produira jamais un bon clip (pas de visage, pas de
-    réaction), quel que soit le montage.
-    """
+    """Raison du rejet si le clip est hors-cible, sinon None."""
     title = (c.title or "").lower()
     creator = (c.creator or "").lower()
     for kw in settings.TITLE_BLACKLIST:
@@ -75,66 +59,105 @@ def _is_low_quality(c: VideoCandidate) -> str | None:
     return None
 
 
+def _moment_key(c: VideoCandidate) -> tuple[str, float] | None:
+    """(référence, seconde) d'un moment : position dans la VOD si connue,
+    sinon heure de création du clip (2 clips du même moment sont créés à
+    quelques secondes/minutes d'écart)."""
+    vid, off = c.extra.get("video_id"), c.extra.get("vod_offset")
+    if vid and off is not None:
+        return (f"vod:{vid}", float(off))
+    if c.published_at:
+        try:
+            ts = datetime.fromisoformat(c.published_at.replace("Z", "+00:00")).timestamp()
+            return ("t", ts)
+        except ValueError:
+            return None
+    return None
+
+
+def dedupe_moments(cands: list[VideoCandidate], window_s: float) -> tuple[list[VideoCandidate], list[VideoCandidate]]:
+    """Garde 1 clip par moment (le mieux classé). Entrée triée par score décroissant.
+
+    Retourne (gardés, doublons).
+    """
+    kept: list[VideoCandidate] = []
+    dupes: list[VideoCandidate] = []
+    seen: dict[str, list[tuple[str, float]]] = {}
+    for c in cands:
+        who = (c.creator or "").lower()
+        key = _moment_key(c)
+        if key is not None:
+            prior = seen.setdefault(who, [])
+            if any(ref == key[0] and abs(sec - key[1]) <= window_s for ref, sec in prior):
+                dupes.append(c)
+                continue
+            prior.append(key)
+        kept.append(c)
+    return kept, dupes
+
+
+def cap_per_creator(cands: list[VideoCandidate], cap: int) -> tuple[list[VideoCandidate], list[VideoCandidate]]:
+    if cap <= 0:
+        return cands, []
+    count: dict[str, int] = {}
+    kept, dropped = [], []
+    for c in cands:
+        who = (c.creator or "").lower()
+        if count.get(who, 0) >= cap and not c.extra.get("target"):
+            dropped.append(c)
+            continue
+        count[who] = count.get(who, 0) + 1
+        kept.append(c)
+    return kept, dropped
+
+
 def detect_all(
     enabled: list[Platform] | None = None,
     max_candidates: int | None = None,
 ) -> list[VideoCandidate]:
-    """Agrège les candidats des sources activées, triés et plafonnés.
-
-    :param enabled: sous-ensemble de plateformes à interroger (défaut : toutes).
-    :param max_candidates: plafond de la file retournée (défaut settings).
-    """
-    if enabled is None:
-        enabled = list(_SOURCES.keys())
-        # YouTube n'est pas téléchargeable en CI (anti-bot) : on ne le détecte
-        # que s'il est explicitement activé, pour ne pas gaspiller d'essais.
-        if not settings.YOUTUBE_SOURCE_ENABLE and Platform.YOUTUBE in enabled:
-            enabled.remove(Platform.YOUTUBE)
-            log.info("YouTube désactivé comme source (YOUTUBE_SOURCE_ENABLE=false).")
+    """Agrège les clips des sources activées, filtrés, dédoublonnés et triés."""
+    enabled = enabled or list(_SOURCES.keys())
     max_candidates = max_candidates or settings.MAX_CANDIDATES
 
     all_candidates: list[VideoCandidate] = []
     for platform in enabled:
-        detector = _SOURCES[platform]
         try:
-            found = detector()
+            found = _SOURCES[platform]()
         except settings.ConfigError as exc:
             log.warning("Détection %s ignorée (config manquante) : %s", platform.value, exc)
             continue
         except Exception as exc:  # noqa: BLE001 - isole la panne d'une source
             log.error("Détection %s a échoué : %s", platform.value, exc, exc_info=True)
             continue
-        for c in found:
-            c.score = round(c.score * _PLATFORM_WEIGHT.get(platform, 1.0), 4)
         all_candidates.extend(found)
         log.info("Source %s : %d candidats", platform.value, len(found))
 
-    # Filtre qualité : on écarte le contenu recyclé/narration avant tout traitement.
     LAST_REJECTED.clear()
     kept: list[VideoCandidate] = []
     for c in all_candidates:
         reason = _is_low_quality(c)
         if reason:
             LAST_REJECTED.append((c, reason))
-            log.info("Écarté (%s) : %s — %s", reason, c.creator, c.title[:60])
         else:
             kept.append(c)
-    if LAST_REJECTED:
-        log.info("Filtre qualité : %d source(s) écartée(s)", len(LAST_REJECTED))
 
-    # Déduplication cross-source par uid (sécurité ; peu probable de collision).
     unique: dict[str, VideoCandidate] = {}
     for c in kept:
         if c.uid not in unique or c.score > unique[c.uid].score:
             unique[c.uid] = c
+    ranked = sorted(unique.values(), key=lambda c: c.score, reverse=True)
 
-    ranked = sorted(unique.values(), key=lambda c: c.score, reverse=True)[:max_candidates]
+    ranked, dupes = dedupe_moments(ranked, settings.DUPLICATE_WINDOW_S)
+    LAST_REJECTED.extend((c, "même moment déjà clippé (doublon)") for c in dupes)
+    ranked, capped = cap_per_creator(ranked, settings.MAX_CLIPS_PER_STREAMER)
+    LAST_REJECTED.extend((c, "quota par streamer atteint") for c in capped)
+
+    ranked = ranked[:max_candidates]
     log.info(
-        "Détection terminée : %d candidats retenus (sur %d bruts)",
-        len(ranked),
-        len(all_candidates),
+        "Détection terminée : %d candidats retenus (sur %d bruts ; %d écartés)",
+        len(ranked), len(all_candidates), len(LAST_REJECTED),
     )
     return ranked
 
 
-__all__ = ["detect_all", "market_of", "youtube", "twitch", "kick"]
+__all__ = ["detect_all", "market_of", "dedupe_moments", "cap_per_creator", "twitch", "kick"]
