@@ -124,8 +124,8 @@ def _extract_segment(source: Path, start: float, end: float, out: Path) -> Path:
     cmd = [
         settings.FFMPEG_BIN, "-y",
         "-ss", f"{start:.3f}", "-i", str(source), "-t", f"{dur:.3f}",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12",
+        "-c:a", "aac", "-b:a", "256k",
         str(out),
     ]
     _run_ffmpeg(cmd, "extraction segment")
@@ -348,8 +348,10 @@ def make_vertical_clip(
         common_tail = [
             "-map", "[v]", "-map", "0:a?",
             "-r", str(settings.OUTPUT_FPS),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "128k",
+            # Intermédiaire quasi sans perte : la compression finale se fait UNE
+            # fois (burn_subtitles), pas 3 fois en cascade.
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12",
+            "-c:a", "aac", "-b:a", "256k",
             str(out_path),
         ]
 

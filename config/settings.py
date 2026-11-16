@@ -102,7 +102,7 @@ DRY_RUN: bool = _get_bool("DRY_RUN", False)
 MAX_CANDIDATES: int = _get_int("MAX_CANDIDATES", 80)
 #: Nombre max de clips ESSAYÉS par cycle (téléchargés + notés par le LLM) : un
 #: clip refusé (note trop basse, échec réseau…) fait passer au suivant.
-MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 14)
+MAX_SOURCE_ATTEMPTS_PER_RUN: int = _get_int("MAX_SOURCE_ATTEMPTS_PER_RUN", 20)
 #: Une source n'est définitivement abandonnée qu'après ce nombre d'échecs.
 MAX_SOURCE_FAILURES: int = _get_int("MAX_SOURCE_FAILURES", 3)
 #: Nombre max de clips produits/publiés par cycle (toutes chaînes confondues).
@@ -189,8 +189,12 @@ PRIMARY_GAME_BOOST: float = _get_float("PRIMARY_GAME_BOOST", 25.0)
 #: Fenêtre de fraîcheur des clips (jours). Court = actualité (sortie GTA 6).
 TWITCH_CLIPS_DAYS: int = _get_int("TWITCH_CLIPS_DAYS", 3)
 #: Pages de 100 clips lues par jeu (triées par vues décroissantes).
-TWITCH_CLIPS_PAGES: int = _get_int("TWITCH_CLIPS_PAGES", 3)
+TWITCH_CLIPS_PAGES: int = _get_int("TWITCH_CLIPS_PAGES", 8)
+#: Seuil de vues VISÉ. Il est abaissé automatiquement (jusqu'au plancher) quand
+#: une langue a moins de TWITCH_MIN_POOL_PER_LANG clips : le LLM tranche ensuite.
 TWITCH_CLIP_MIN_VIEWS: int = _get_int("TWITCH_CLIP_MIN_VIEWS", 100)
+TWITCH_CLIP_FLOOR_VIEWS: int = _get_int("TWITCH_CLIP_FLOOR_VIEWS", 10)
+TWITCH_MIN_POOL_PER_LANG: int = _get_int("TWITCH_MIN_POOL_PER_LANG", 12)
 #: Langues retenues (langue de diffusion du streamer).
 TWITCH_LANGUAGES: list[str] = _get_list("TWITCH_LANGUAGES", ["fr", "en"])
 #: MODE CAMPAGNE (monétisation) : créateurs ciblés en priorité, même hors live.
@@ -284,6 +288,9 @@ GEMINI_MODELS: list[str] = _get_list(
 GEMINI_SEND_VIDEO: bool = _get_bool("GEMINI_SEND_VIDEO", True)
 #: Espacement minimal entre deux appels (free tier ~10 req/min sur Flash).
 GEMINI_MIN_INTERVAL_S: float = _get_float("GEMINI_MIN_INTERVAL_S", 7.0)
+#: Sélection "meilleurs parmi N" : on fait noter N clips par marché puis on ne
+#: monte que les CLIPS_PER_MARKET mieux notés (au lieu des premiers qui passent).
+BRIEFS_PER_MARKET: int = _get_int("BRIEFS_PER_MARKET", 6)
 #: Note mini (0-100) donnée par le LLM pour garder un clip. 0 = tout garder.
 CLIP_MIN_SCORE: float = _get_float("CLIP_MIN_SCORE", 55.0)
 #: Le LLM peut raccourcir le clip (couper un début mou / une fin qui traîne).
@@ -334,6 +341,9 @@ CAM_MIN_WIDTH_FRAC: float = _get_float("CAM_MIN_WIDTH_FRAC", 0.45)
 BLUR_FG_HEIGHT_FRAC: float = _get_float("BLUR_FG_HEIGHT_FRAC", 0.50)
 FFMPEG_BIN: str = _get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN: str = _get("FFPROBE_BIN", "ffprobe")
+#: Encodage FINAL (le seul avec perte). crf plus bas = meilleure image, fichier plus lourd.
+FINAL_CRF: int = _get_int("FINAL_CRF", 19)
+FINAL_PRESET: str = _get("FINAL_PRESET", "fast")
 #: Normalisation de loudness (standard TikTok ~ -14 LUFS) sur le rendu final.
 AUDIO_LOUDNORM: bool = _get_bool("AUDIO_LOUDNORM", True)
 AUDIO_LOUDNORM_I: float = _get_float("AUDIO_LOUDNORM_I", -14.0)

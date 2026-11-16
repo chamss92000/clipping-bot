@@ -34,6 +34,7 @@ def test_detect_by_game(monkeypatch):
     monkeypatch.setattr(settings, "TWITCH_LANGUAGES", ["fr", "en"])
     monkeypatch.setattr(settings, "TWITCH_CLIP_MIN_VIEWS", 100)
     monkeypatch.setattr(settings, "TARGET_STREAMERS_TWITCH", [])
+    monkeypatch.setattr(settings, "TWITCH_MIN_POOL_PER_LANG", 0)  # seuil fixe pour ce test
 
     res = twitch.detect()
     ids = {c.source_id for c in res}
@@ -45,3 +46,16 @@ def test_detect_by_game(monkeypatch):
     # bonus prioritaire appliqué
     base = twitch.clip_trend_score(500, "2026-11-16T08:00:00Z")
     assert by_id["c1"].score == round(base + settings.PRIMARY_GAME_BOOST, 2)
+
+
+def test_adaptive_threshold(monkeypatch):
+    monkeypatch.setattr(settings, "TWITCH_CLIP_MIN_VIEWS", 100)
+    monkeypatch.setattr(settings, "TWITCH_CLIP_FLOOR_VIEWS", 10)
+    monkeypatch.setattr(settings, "TWITCH_MIN_POOL_PER_LANG", 3)
+    clips = [_clip(i, "6", lang="en", views=500) for i in range(5)]
+    clips += [_clip(10 + i, "6", lang="fr", views=v) for i, v in enumerate([40, 35, 20, 5])]
+    kept, min_views, reasons = twitch.select_clips(clips, {"fr", "en"})
+    # pas assez de FR à 100 vues => seuil abaissé (100 -> 33 -> 11) jusqu'à avoir 3 FR
+    assert min_views == 11
+    assert sum(1 for c in kept if c["language"] == "fr") == 3
+    assert reasons == {"vues": 1}

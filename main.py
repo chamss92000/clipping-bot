@@ -4,8 +4,9 @@ Point d'entrée unique lancé par GitHub Actions (cron) ET en local.
 Pour chaque clip viral détecté (Twitch/Kick, jeux suivis) :
 
     téléchargement → brief LLM multimodal (note, recadrage, titre, légende)
-    → [note trop basse : clip écarté] → transcription (sous-titres)
-    → recadrage 9:16 + sous-titres + titre → dépôt Drive (+ publication)
+    → [note trop basse : clip écarté] → on garde les MIEUX NOTÉS du cycle
+    → transcription (sous-titres) → recadrage 9:16 + sous-titres + titre
+    → dépôt Drive (+ publication)
 
 État persistant sur Drive (state.json) : déduplication des clips déjà traités,
 historique des titres (anti-répétition), quotas de publication.
@@ -51,13 +52,53 @@ def _dump_candidates(candidates) -> None:
     log.info("Candidats écrits dans %s", out)
 
 
-def _process_clip(cand, storage, state, market: str, clip_root: str | None) -> tuple[str, dict]:
-    """Traite un clip de bout en bout.
+def _cleanup(*paths) -> None:
+    """Disque du runner limité : on ne garde rien une fois le clip livré/écarté."""
+    for f in paths:
+        try:
+            if f is not None:
+                f.unlink(missing_ok=True)
+        except OSError:
+            pass
 
-    Retourne (statut, infos) avec statut ∈ {"ok", "rejected", "failed"}.
-    Lève BotCheckError si la plateforme bloque le téléchargement.
+
+def _rank(cand, brief) -> float:
+    """Classement final : la note du LLM (qui a VU le clip) domine ; la
+    vélocité de vues départage. Sans LLM (note None) : note neutre."""
+    llm = brief.score if brief.score is not None else 60.0
+    return llm + 0.15 * cand.score
+
+
+def _brief_clip(cand, state, market: str, recent: list[str]):
+    """Télécharge + fait noter un clip. Retourne (brief, DownloadResult | None).
+
+    Un brief déjà en cache (clip bien noté mais pas monté au cycle précédent)
+    est réutilisé sans téléchargement ni appel LLM. Lève BotCheckError si la
+    plateforme bloque.
     """
-    # Imports tardifs : n'importe torch/mediapipe que si on traite réellement.
+    from src.downloader.download import download
+    from src.viral.gemini import ClipBrief, analyze_clip
+
+    cached = state.briefs.get(cand.uid)
+    if cached:
+        try:
+            return ClipBrief(**cached["brief"]), None
+        except Exception:  # noqa: BLE001 - cache d'un ancien format : on recalcule
+            state.briefs.pop(cand.uid, None)
+
+    dl = download(cand, settings.DOWNLOAD_DIR)
+    brief = analyze_clip(
+        dl.path, dl.duration_s,
+        title=cand.title, creator=cand.creator, game=cand.extra.get("game_name") or "",
+        platform=cand.platform.value, views=cand.views,
+        lang=market, recent_hooks=recent,
+    )
+    return brief, dl
+
+
+def _render_clip(cand, brief, dl, storage, state, market: str, clip_root: str | None) -> str:
+    """Monte et livre un clip déjà noté. Retourne "ok" ou "failed"."""
+    # Imports tardifs : n'importe mediapipe/whisper que si on monte réellement.
     from src.downloader.download import download
     from src.editing import clip as clip_mod
     from src.editing.clip import make_vertical_clip
@@ -65,27 +106,16 @@ def _process_clip(cand, storage, state, market: str, clip_root: str | None) -> t
     from src.editing.title_card import render_title, title_center_y
     from src.publisher.tiktok import build_caption, next_publish_slot, publish
     from src.transcription.whisper_transcribe import transcribe
-    from src.viral.gemini import analyze_clip, snap_to_words
+    from src.viral.gemini import snap_to_words
 
-    dl = download(cand, settings.DOWNLOAD_DIR)
+    if dl is None or not dl.path.exists():
+        dl = download(cand, settings.DOWNLOAD_DIR)
     game = cand.extra.get("game_name") or ""
-    tmp_files = [dl.path]
+    base = f"{cand.platform.value}_{re.sub(r'[^A-Za-z0-9_-]', '', cand.source_id)[:40]}"
+    raw_clip = settings.CLIPS_DIR / f"{base}.mp4"
+    short_id = re.sub(r"\W", "", cand.source_id)[-6:]
+    final_clip = settings.CLIPS_DIR / f"{_slugify(brief.hook or cand.title)}_{short_id}.mp4"
     try:
-        # --- Brief LLM : note + recadrage + titre (AVANT Whisper : un clip
-        # rejeté ne coûte pas de transcription) -------------------------------
-        recent = [p.get("hook", "") for p in state.published if p.get("market") == market][-15:]
-        brief = analyze_clip(
-            dl.path, dl.duration_s,
-            title=cand.title, creator=cand.creator, game=game,
-            platform=cand.platform.value, views=cand.views,
-            lang=market, recent_hooks=recent,
-        )
-        info = {"brief": brief.to_dict()}
-        if brief.score is not None and brief.score < settings.CLIP_MIN_SCORE:
-            log.info("  ✗ Clip écarté par le LLM (note %.0f < %.0f) : %s",
-                     brief.score, settings.CLIP_MIN_SCORE, brief.what_happens[:120])
-            return "rejected", info
-
         # --- Sous-titres -----------------------------------------------------
         words = []
         try:
@@ -97,16 +127,12 @@ def _process_clip(cand, storage, state, market: str, clip_root: str | None) -> t
         except Exception as exc:  # noqa: BLE001 - un clip sans sous-titres reste publiable
             log.warning("  Transcription échouée (%s) — clip sans sous-titres.", exc)
 
-        start, end = snap_to_words(brief.start, brief.end, words, dl.duration_s)
+        start, end = snap_to_words(brief.start, brief.end or dl.duration_s, words, dl.duration_s)
+        end = min(end, dl.duration_s)
         if end - start < 1.0:
             start, end = 0.0, min(dl.duration_s, float(settings.CLIP_MAX_DURATION_S))
 
         # --- Montage ---------------------------------------------------------
-        base = f"{cand.platform.value}_{re.sub(r'[^A-Za-z0-9_-]', '', cand.source_id)[:40]}"
-        raw_clip = settings.CLIPS_DIR / f"{base}.mp4"
-        short_id = re.sub(r"\W", "", cand.source_id)[-6:]
-        final_clip = settings.CLIPS_DIR / f"{_slugify(brief.hook or cand.title)}_{short_id}.mp4"
-        tmp_files.append(raw_clip)
         try:
             make_vertical_clip(dl.path, start, end, raw_clip)
             ass = build_ass(
@@ -124,7 +150,7 @@ def _process_clip(cand, storage, state, market: str, clip_root: str | None) -> t
             burn_subtitles(raw_clip, ass, final_clip, title_png=title_png, title_center_y=title_y)
         except Exception as exc:  # noqa: BLE001
             log.error("  Montage échoué (%s) : %s", cand.uid, exc)
-            return "failed", info
+            return "failed"
 
         caption = build_caption(brief.hook, brief.hashtags, brief.description)
         record = {
@@ -141,14 +167,15 @@ def _process_clip(cand, storage, state, market: str, clip_root: str | None) -> t
             "caption": caption,
             "score": brief.score,
             "model": brief.model,
+            "duration_s": round(end - start, 1),
         }
 
         # --- Livraison -------------------------------------------------------
+        try:
+            storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS, root=clip_root)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("  Upload Drive échoué : %s", exc)
         if settings.PUBLISH_MODE == "manual":
-            try:
-                storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS, root=clip_root)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("  Upload Drive échoué : %s", exc)
             record["status"] = "ready_manual"
             if settings.YOUTUBE_UPLOAD_ENABLE and state.youtube_left() > 0:
                 try:
@@ -162,26 +189,17 @@ def _process_clip(cand, storage, state, market: str, clip_root: str | None) -> t
                     log.warning("  Upload YouTube échoué : %s", exc)
                     record["youtube"] = "failed"
         else:
-            try:
-                storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS, root=clip_root)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("  Upload Drive du clip échoué : %s", exc)
             res = publish(final_clip, caption, [], schedule_at=next_publish_slot())
             record.update(status=res.status, post_id=res.post_id)
             if res.status in ("posted", "scheduled"):
                 state.record_upload()
 
         state.published.append(record)
-        log.info("  ✅ Clip [%s] prêt : %s — « %s »", market, final_clip.name, brief.hook)
-        tmp_files.append(final_clip)
-        return "ok", info
+        log.info("  ✅ Clip [%s] prêt (note %s) : %s — « %s »", market,
+                 f"{brief.score:.0f}" if brief.score is not None else "n/a", final_clip.name, brief.hook)
+        return "ok"
     finally:
-        # Disque du runner limité : on ne garde rien une fois le clip livré.
-        for f in tmp_files:
-            try:
-                f.unlink(missing_ok=True)
-            except OSError:
-                pass
+        _cleanup(dl.path, raw_clip, final_clip)
 
 
 def run(detect_only: bool = False) -> int:
@@ -197,6 +215,9 @@ def run(detect_only: bool = False) -> int:
         log.warning("Aucun clip candidat détecté — fin du cycle.")
         return 0
     _dump_candidates(candidates)
+    for i, c in enumerate(candidates[:20], 1):
+        log.info("  #%02d %5.1f | %6d vues | %2ss | %s | %s | %s — %s", i, c.score, c.views,
+                 c.duration_s, c.extra.get("language"), c.extra.get("game_name"), c.creator, c.title[:50])
     if detect_only:
         log.info("--detect-only : arrêt après détection (%d candidats).", len(candidates))
         return 0
@@ -221,58 +242,96 @@ def run(detect_only: bool = False) -> int:
             log.warning("Dossier Drive fr indisponible (%s) — fr routé vers le principal.", exc)
             market_roots["fr"] = None
 
-    # --- Traitement : quota PAR MARCHÉ (sinon l'anglais rafle tout) ----------
+    # --- Sélection "meilleurs parmi N", quota PAR MARCHÉ ----------------------
+    # Phase A : on télécharge + fait NOTER par le LLM jusqu'à BRIEFS_PER_MARKET
+    #           clips par marché (les clips faibles sont écartés ici).
+    # Phase B : on ne MONTE que les CLIPS_PER_MARKET mieux notés. Les bons clips
+    #           non retenus gardent leur brief en cache pour le cycle suivant.
+    import time
+
     from src.downloader.download import BotCheckError, is_bot_check
 
+    now = time.time()
+    state.briefs = {u: b for u, b in state.briefs.items() if now - b.get("ts", 0) < 4 * 86400}
+
     targets = {mk: settings.CLIPS_PER_MARKET for mk in settings.MARKETS}
-    produced = {mk: 0 for mk in settings.MARKETS}
+    want = {mk: max(settings.BRIEFS_PER_MARKET, targets[mk]) for mk in targets}
+    shortlist: dict[str, list] = {mk: [] for mk in targets}
+    produced = {mk: 0 for mk in targets}
     attempts = 0
     published_before = len(state.published)
     chosen: list = []
     llm_rejected: list[tuple] = []
     blocked_platforms: set = set()
-    for cand in candidates:
-        total = sum(produced.values())
-        if all(produced[mk] >= targets[mk] for mk in targets) or total >= settings.MAX_CLIPS_PER_RUN:
-            log.info("Objectif atteint : %s", produced)
+
+    for cand in candidates:  # ---------------- Phase A : noter ----------------
+        if all(len(shortlist[mk]) >= want[mk] for mk in targets):
             break
         if attempts >= settings.MAX_SOURCE_ATTEMPTS_PER_RUN:
-            log.warning("Limite d'essais atteinte (%d) — %d clips produits.", attempts, total)
+            log.warning("Limite d'essais atteinte (%d).", attempts)
             break
         if state.is_processed(cand.uid) or cand.platform in blocked_platforms:
             continue
         market = market_of(cand)
-        if market not in targets or produced[market] >= targets[market]:
+        if market not in targets or len(shortlist[market]) >= want[market]:
             continue
 
         log.info("→ %s [%s] %s · %s — %s", cand.uid, market, cand.extra.get("game_name"),
                  cand.creator, cand.title[:60])
         chosen.append(cand)
-        attempts += 1
-        status = "failed"
+        cached = cand.uid in state.briefs
+        if not cached:
+            attempts += 1
+        recent = [p.get("hook", "") for p in state.published if p.get("market") == market][-12:]
+        recent += [b.hook for _, b, _ in shortlist[market]]  # + titres de CE cycle
         try:
-            status, info = _process_clip(cand, storage, state, market, market_roots.get(market))
+            brief, dl = _brief_clip(cand, state, market, recent)
         except Exception as exc:  # noqa: BLE001 - isole la panne d'un clip
             if isinstance(exc, BotCheckError) or is_bot_check(exc):
                 blocked_platforms.add(cand.platform)
                 attempts -= 1
-                status = "blocked"
                 log.warning("  %s bloque (anti-bot) — plateforme abandonnée pour ce cycle.",
                             cand.platform.value)
             else:
-                log.error("  Échec %s : %s", cand.uid, exc, exc_info=True)
+                log.error("  Échec %s : %s", cand.uid, exc)
+                if state.record_failure(cand.uid) >= settings.MAX_SOURCE_FAILURES:
+                    state.mark_processed(cand.uid)
+            continue
 
-        if status == "ok":
-            produced[market] += 1
-            state.mark_processed(cand.uid)
-        elif status == "rejected":
+        if brief.score is not None and brief.score < settings.CLIP_MIN_SCORE:
+            log.info("  ✗ Écarté par le LLM (note %.0f < %.0f) : %s",
+                     brief.score, settings.CLIP_MIN_SCORE, brief.what_happens[:120])
             state.mark_processed(cand.uid)  # jugé faible : inutile de le revoir
-            llm_rejected.append((cand, info["brief"]))
-        elif status == "failed":
-            n = state.record_failure(cand.uid)
-            if n >= settings.MAX_SOURCE_FAILURES:
+            state.briefs.pop(cand.uid, None)
+            llm_rejected.append((cand, brief.to_dict()))
+            _cleanup(dl.path if dl else None)
+            continue
+        shortlist[market].append((cand, brief, dl))
+    storage.save_state(state)
+
+    for market, items in shortlist.items():  # -------- Phase B : monter --------
+        items.sort(key=lambda it: _rank(it[0], it[1]), reverse=True)
+        log.info("Classement [%s] : %s", market,
+                 " | ".join(f"{_rank(c, b):.0f} {c.creator}" for c, b, _ in items) or "(vide)")
+        for cand, brief, dl in items:
+            if produced[market] >= targets[market] or sum(produced.values()) >= settings.MAX_CLIPS_PER_RUN:
+                # Bon clip, mais pas dans le top du cycle : on garde son brief.
+                state.briefs[cand.uid] = {"brief": brief.to_dict(), "ts": now}
+                _cleanup(dl.path if dl else None)
+                continue
+            status = "failed"
+            try:
+                status = _render_clip(cand, brief, dl, storage, state, market, market_roots.get(market))
+            except Exception as exc:  # noqa: BLE001
+                log.error("  Échec montage %s : %s", cand.uid, exc, exc_info=True)
+            state.briefs.pop(cand.uid, None)
+            if status == "ok":
+                produced[market] += 1
                 state.mark_processed(cand.uid)
-        storage.save_state(state)  # sauvegarde incrémentale (résilience)
+            elif state.record_failure(cand.uid) >= settings.MAX_SOURCE_FAILURES:
+                state.mark_processed(cand.uid)
+            storage.save_state(state)  # sauvegarde incrémentale (résilience)
+    log.info("Clips produits : %s", produced)
 
     # --- Nettoyage : purge des clips > N heures (garde de la place) ---------
     if settings.DRIVE_CLEANUP_MAX_AGE_H > 0:

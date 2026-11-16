@@ -200,12 +200,40 @@ def _clip_to_candidate(clip: dict, game_name: str, game: TrackedGame | None) -> 
     )
 
 
-def _keep(clip: dict, langs: set[str]) -> bool:
+def _drop_reason(clip: dict, langs: set[str], min_views: int) -> str | None:
     if langs and clip.get("language") not in langs:
-        return False
-    if int(clip.get("view_count", 0)) < settings.TWITCH_CLIP_MIN_VIEWS:
-        return False
-    return float(clip.get("duration", 0) or 0) >= settings.SOURCE_CLIP_MIN_S
+        return "langue"
+    if float(clip.get("duration", 0) or 0) < settings.SOURCE_CLIP_MIN_S:
+        return "durée"
+    if int(clip.get("view_count", 0)) < min_views:
+        return "vues"
+    return None
+
+
+def select_clips(clips: list[dict], langs: set[str]) -> tuple[list[dict], int, dict[str, int]]:
+    """Filtre les clips d'un jeu avec un seuil de vues ADAPTATIF.
+
+    On part de TWITCH_CLIP_MIN_VIEWS ; si une langue n'a pas assez de clips
+    (jeu pas encore sorti, heure creuse, petit marché FR), on divise le seuil
+    par 3 jusqu'au plancher — mieux vaut laisser le LLM juger un clip à 40 vues
+    que ne rien publier. Retourne (gardés, seuil appliqué, raisons de rejet).
+    """
+    need = settings.TWITCH_MIN_POOL_PER_LANG
+    min_views = settings.TWITCH_CLIP_MIN_VIEWS
+    floor = min(settings.TWITCH_CLIP_FLOOR_VIEWS, min_views)
+    while True:
+        kept, reasons = [], {}
+        for c in clips:
+            r = _drop_reason(c, langs, min_views)
+            if r:
+                reasons[r] = reasons.get(r, 0) + 1
+            else:
+                kept.append(c)
+        per_lang = {l: sum(1 for c in kept if c.get("language") == l) for l in (langs or {"*"})}
+        enough = all(n >= need for n in per_lang.values()) if langs else len(kept) >= need
+        if enough or min_views <= floor:
+            return kept, min_views, reasons
+        min_views = max(floor, min_views // 3)
 
 
 def detect() -> list[VideoCandidate]:
@@ -227,19 +255,25 @@ def detect() -> list[VideoCandidate]:
             except Exception as exc:  # noqa: BLE001
                 log.error("Twitch: clips de '%s' indisponibles : %s", g.info.name, exc)
                 continue
+            selected, min_views, reasons = select_clips(clips, langs)
             kept = 0
-            for clip in clips:
-                if not _keep(clip, langs):
-                    continue
+            for clip in selected:
                 cand = _clip_to_candidate(clip, g.info.name, g)
                 if cand and cand.uid not in candidates:
                     candidates[cand.uid] = cand
                     kept += 1
+            lang_hist: dict[str, int] = {}
+            for clip in clips:
+                lang_hist[clip.get("language") or "?"] = lang_hist.get(clip.get("language") or "?", 0) + 1
+            top_langs = sorted(lang_hist.items(), key=lambda kv: -kv[1])[:6]
+            views = sorted((int(c.get("view_count", 0)) for c in clips), reverse=True)
             log.info(
-                "Twitch: %s%s — %d clips lus, %d retenus (langues %s, ≥%d vues)",
-                g.info.name, " [prioritaire]" if g.primary else "",
-                len(clips), kept, ",".join(sorted(langs)) or "toutes",
-                settings.TWITCH_CLIP_MIN_VIEWS,
+                "Twitch: %s%s — %d clips lus, %d retenus (seuil %d vues) | rejets %s | langues %s | "
+                "vues max/médiane/min %s/%s/%s",
+                g.info.name, " [prioritaire]" if g.primary else "", len(clips), kept, min_views,
+                reasons or "aucun", top_langs,
+                views[0] if views else 0, views[len(views) // 2] if views else 0,
+                views[-1] if views else 0,
             )
 
     # --- 2) Créateurs ciblés (campagnes payées à la vue) ---------------------

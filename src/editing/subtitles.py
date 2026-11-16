@@ -201,8 +201,8 @@ def burn_subtitles(
 ) -> Path:
     """Incruste les sous-titres ASS (optionnels) et le titre-image (optionnel).
 
-    Le titre entre avec une animation courte (glissé de 50px vers le bas +
-    fondu en 0,3s) — l'œil est attiré dès la 1re seconde, comme un vrai edit.
+    Le titre est visible dès la 1re image et glisse de 50px en 0,3s (mouvement
+    = l'œil est attiré, sans jamais laisser une 1re image "vide").
     """
     clip_path = Path(clip_path).resolve()
     out_path = Path(out_path)
@@ -229,7 +229,7 @@ def burn_subtitles(
         if settings.AUDIO_LOUDNORM:
             audio_args = [
                 "-af", f"loudnorm=I={settings.AUDIO_LOUDNORM_I}:TP=-1.5:LRA=11",
-                "-c:a", "aac", "-b:a", "128k",
+                "-c:a", "aac", "-b:a", "192k",
             ]
         else:
             audio_args = ["-c:a", "copy"]
@@ -239,7 +239,9 @@ def burn_subtitles(
             cy = title_center_y if title_center_y is not None else int(settings.OUTPUT_HEIGHT * 0.2)
             graph = (
                 f"[0:v]{subs_filter}[s];"
-                "[1:v]format=rgba,fade=t=in:st=0:d=0.3:alpha=1[t];"
+                # Pas de fondu : le titre est lisible dès la 1re image (c'est elle
+                # qui sert de miniature et qui décide du "stop scroll").
+                "[1:v]format=rgba[t];"
                 f"[s][t]overlay=x=(W-w)/2:y='{cy}-h/2-50*pow(1-min(t/0.3,1),2)'"
                 ":shortest=1:format=auto[v]"
             )
@@ -250,7 +252,10 @@ def burn_subtitles(
             vmap = ["-vf", subs_filter]
         cmd = [
             settings.FFMPEG_BIN, "-y", *inputs, *vmap,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            # Seul encodage "destructif" de la chaîne : qualité haute (TikTok
+            # recompresse derrière — lui donner une source propre évite la bouillie).
+            "-c:v", "libx264", "-preset", settings.FINAL_PRESET, "-crf", str(settings.FINAL_CRF),
+            "-profile:v", "high", "-bf", "2",
             "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             *audio_args,
             str(out_path),

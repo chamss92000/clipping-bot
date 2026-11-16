@@ -74,6 +74,9 @@ class State:
     #: Échecs par source (uid -> nb). Une source n'est abandonnée qu'après
     #: plusieurs échecs (un blocage réseau/anti-bot est souvent temporaire).
     failures: dict[str, int] = field(default_factory=dict)
+    #: Briefs LLM des bons clips notés mais pas encore montés (uid -> brief + ts) :
+    #: réutilisés au cycle suivant sans rappeler le LLM.
+    briefs: dict[str, dict[str, Any]] = field(default_factory=dict)
     updated_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
