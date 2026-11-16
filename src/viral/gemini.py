@@ -42,7 +42,7 @@ _last_call_ts: float = 0.0
 #: de _MAX_CHAIN_FAILURES, on n'appelle plus le LLM de tout le cycle (quota du
 #: jour épuisé / panne) : chaque clip perdrait sinon 1-2 min en tentatives.
 _chain_failures: int = 0
-_MAX_CHAIN_FAILURES = 2
+_MAX_CHAIN_FAILURES = 3
 #: Taille max de la vidéo envoyée en ligne (limite requête Gemini ~20 Mo).
 _MAX_INLINE_BYTES = 15 * 1024 * 1024
 
@@ -358,7 +358,7 @@ def _generate(contents: list, temperature: float) -> tuple[_BriefSchema, str]:
     )
     last_exc: Exception | None = None
     for model in _usable_models():
-        for attempt in range(2):
+        for attempt in range(3):
             _rate_limit()
             try:
                 resp = client.models.generate_content(model=model, contents=contents, config=config)
@@ -383,8 +383,8 @@ def _generate(contents: list, temperature: float) -> tuple[_BriefSchema, str]:
             except errors.ServerError as exc:
                 last_exc = exc
                 log.warning("Viral: %s erreur serveur (%s).", model, exc.code)
-                if attempt == 0:
-                    time.sleep(4)
+                if attempt < 2:  # surcharge passagère ("high demand") : on insiste un peu
+                    time.sleep(5 if attempt == 0 else 15)
                     continue
                 _model_strikes[model] = _model_strikes.get(model, 0) + 1
             except Exception as exc:  # noqa: BLE001 - délai dépassé, JSON invalide, réseau…
@@ -475,6 +475,11 @@ def analyze_clip(
         model, out.score, start, end, duration, hook, " / ".join(out.alternatives),
     )
     return out
+
+
+def llm_down() -> bool:
+    """True si le LLM a été coupé pour ce cycle (pannes répétées)."""
+    return _chain_failures >= _MAX_CHAIN_FAILURES
 
 
 def snap_to_words(start: float, end: float, words, duration: float) -> tuple[float, float]:

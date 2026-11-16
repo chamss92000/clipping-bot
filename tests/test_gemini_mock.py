@@ -90,4 +90,5 @@ def test_circuit_breaker(monkeypatch):
     monkeypatch.setattr(gemini, "_generate", boom)
     for _ in range(5):
         gemini.analyze_clip("x.mp4", 30.0, title="gros fail", creator="a", game="Grand Theft Auto VI", lang="fr")
-    assert len(calls) == 2   # coupé après 2 échecs complets
+    assert len(calls) == 3   # coupé après 3 échecs complets
+    assert gemini.llm_down()

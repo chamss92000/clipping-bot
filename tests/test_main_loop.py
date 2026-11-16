@@ -30,7 +30,7 @@ class _Storage:
 
 
 def test_best_of_n(monkeypatch, tmp_path):
-    scores = {"a": 60, "b": 95, "c": 30, "d": 80, "e": 70}
+    scores = {"a": 60, "b": 95, "c": 30, "d": 80, "e": 70, "f": None}
     cands = [
         VideoCandidate(platform=Platform.TWITCH, source_id=k, url=k, title=k, creator=k,
                        score=90 - i, extra={"language": "fr", "game_name": "Grand Theft Auto VI"})
@@ -44,7 +44,7 @@ def test_best_of_n(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "validate", lambda blocks: None)
     monkeypatch.setattr(settings, "MARKETS", ["fr"])
     monkeypatch.setattr(settings, "CLIPS_PER_MARKET", 2)
-    monkeypatch.setattr(settings, "BRIEFS_PER_MARKET", 4)
+    monkeypatch.setattr(settings, "BRIEFS_PER_MARKET", 5)
     monkeypatch.setattr(settings, "CLIP_MIN_SCORE", 55.0)
     monkeypatch.setattr(settings, "NOTIFY_EMAIL_ENABLE", False)
     monkeypatch.setattr(settings, "WORK_DIR", tmp_path)
@@ -68,4 +68,6 @@ def test_best_of_n(monkeypatch, tmp_path):
     assert not st.is_processed("twitch:a")
     # a et e : bons mais non montés => brief en cache pour le cycle suivant
     assert set(st.briefs) == {"twitch:a", "twitch:e"}
+    # f : pas de note LLM => ni monté, ni grillé, ni mis en cache
+    assert not st.is_processed("twitch:f") and "twitch:f" not in st.briefs
     assert "rapport.md" in storage.uploads

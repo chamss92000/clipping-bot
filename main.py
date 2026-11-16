@@ -298,6 +298,17 @@ def run(detect_only: bool = False) -> int:
                     state.mark_processed(cand.uid)
             continue
 
+        if brief.score is None and settings.REQUIRE_LLM:
+            # LLM indisponible : ni note ni vrai titre. On ne publie PAS un clip
+            # non jugé avec un titre de secours ; il sera retenté au prochain cycle.
+            log.warning("  ⏸ Pas de brief LLM — clip reporté au prochain cycle.")
+            _cleanup(dl.path if dl else None)
+            from src.viral.gemini import llm_down
+
+            if llm_down():
+                log.warning("LLM indisponible : arrêt de la notation pour ce cycle.")
+                break
+            continue
         if brief.score is not None and brief.score < settings.CLIP_MIN_SCORE:
             log.info("  ✗ Écarté par le LLM (note %.0f < %.0f) : %s",
                      brief.score, settings.CLIP_MIN_SCORE, brief.what_happens[:120])

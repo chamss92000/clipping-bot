@@ -297,6 +297,9 @@ GEMINI_MIN_INTERVAL_S: float = _get_float("GEMINI_MIN_INTERVAL_S", 7.0)
 BRIEFS_PER_MARKET: int = _get_int("BRIEFS_PER_MARKET", 6)
 #: Note mini (0-100) donnée par le LLM pour garder un clip. 0 = tout garder.
 CLIP_MIN_SCORE: float = _get_float("CLIP_MIN_SCORE", 55.0)
+#: True = un clip que le LLM n'a pas pu noter (panne/quota) n'est PAS publié :
+#: il est retenté au cycle suivant. Mieux vaut 4 bons clips que 6 dont 2 au hasard.
+REQUIRE_LLM: bool = _get_bool("REQUIRE_LLM", True)
 #: Le LLM peut raccourcir le clip (couper un début mou / une fin qui traîne).
 SMART_TRIM: bool = _get_bool("SMART_TRIM", True)
 #: Fenêtre de durée acceptable d'un clip final (secondes).
