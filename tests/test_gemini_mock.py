@@ -46,6 +46,7 @@ def fake(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "GEMINI_MODELS", ["model-a", "model-b"])
     monkeypatch.setattr(settings, "GEMINI_SEND_VIDEO", False)
     monkeypatch.setattr(settings, "GEMINI_MIN_INTERVAL_S", 0.0)
+    monkeypatch.setattr(gemini, "_chain_failures", 0)
     return models
 
 
@@ -64,8 +65,24 @@ def test_analyze_clip_fallback_and_selection(fake):
 
 
 def test_analyze_clip_never_raises(monkeypatch):
+    monkeypatch.setattr(gemini, "_chain_failures", 0)
     monkeypatch.setattr(settings, "GEMINI_API_KEY", None)
     monkeypatch.setattr(settings, "GEMINI_SEND_VIDEO", False)
     b = gemini.analyze_clip("x.mp4", 30.0, title="gros fail en voiture", creator="a",
                             game="Grand Theft Auto VI", lang="fr")
     assert b.score is None and b.hook == "Gros fail en voiture"
+
+
+def test_circuit_breaker(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_SEND_VIDEO", False)
+    monkeypatch.setattr(gemini, "_chain_failures", 0)
+    calls = []
+
+    def boom(contents, temperature):
+        calls.append(1)
+        raise RuntimeError("quota")
+
+    monkeypatch.setattr(gemini, "_generate", boom)
+    for _ in range(5):
+        gemini.analyze_clip("x.mp4", 30.0, title="gros fail", creator="a", game="Grand Theft Auto VI", lang="fr")
+    assert len(calls) == 2   # coupé après 2 échecs complets

@@ -38,6 +38,11 @@ from src.utils.logging import get_logger
 log = get_logger("viral")
 
 _last_call_ts: float = 0.0
+#: Disjoncteur : échecs COMPLETS consécutifs (toute la chaîne de modèles). Au-delà
+#: de _MAX_CHAIN_FAILURES, on n'appelle plus le LLM de tout le cycle (quota du
+#: jour épuisé / panne) : chaque clip perdrait sinon 1-2 min en tentatives.
+_chain_failures: int = 0
+_MAX_CHAIN_FAILURES = 2
 #: Taille max de la vidéo envoyée en ligne (limite requête Gemini ~20 Mo).
 _MAX_INLINE_BYTES = 15 * 1024 * 1024
 
@@ -400,6 +405,10 @@ def analyze_clip(
         creator_tag=re.sub(r"\W", "", (creator or "").lower()) or "streamer",
     )
 
+    global _chain_failures
+    if _chain_failures >= _MAX_CHAIN_FAILURES:
+        log.info("Viral: LLM coupé pour ce cycle — titre de secours : %s", base.hook)
+        return base
     try:
         from google.genai import types
 
@@ -411,7 +420,9 @@ def analyze_clip(
                     contents.append(types.Part.from_bytes(data=proxy.read_bytes(), mime_type="video/mp4"))
             contents.append(prompt)
             brief, model = _generate(contents, temperature=0.8)
+        _chain_failures = 0
     except Exception as exc:  # noqa: BLE001 - le clip passe quand même, titre de secours
+        _chain_failures += 1
         log.warning("Viral: brief LLM indisponible (%s) — titre de secours : %s", exc, base.hook)
         return base
 
