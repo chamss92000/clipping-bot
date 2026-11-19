@@ -61,8 +61,6 @@ def build_report(
                 lines.append("    ```")
                 if c.get("source_url"):
                     lines.append(f"  - source : {c['source_url']}")
-                if c.get("youtube"):
-                    lines.append(f"  - YouTube : {c['youtube']}")
             lines.append("")
     else:
         lines += ["_Aucun clip produit lors de ce cycle._", ""]

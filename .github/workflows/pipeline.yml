@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       dry_run:
-        description: "Ne rien publier"
+        description: "Test : clips déposés sur Drive mais pas d'e-mail"
         type: boolean
         default: true
 
@@ -51,7 +51,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -U yt-dlp   # toujours la derniere version (extracteurs Twitch/Kick)
+          pip install -U yt-dlp   # toujours la derniere version (extracteur Twitch)
 
       - name: Tests unitaires (rapides, sans réseau)
         run: python -m pytest -q tests
@@ -72,12 +72,6 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
-          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
-          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
-          TIKTOK_PRIVACY_LEVEL: ${{ vars.TIKTOK_PRIVACY_LEVEL || 'SELF_ONLY' }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_UPLOAD_ENABLE: ${{ vars.YOUTUBE_UPLOAD_ENABLE || 'false' }}
           # --- Jeux (modifiable dans Settings > Variables, sans code) ---
           # nom EXACT de la catégorie Twitch, séparés par des virgules
           GAMES_PRIMARY: ${{ vars.GAMES_PRIMARY || 'Grand Theft Auto VI' }}
@@ -98,7 +92,6 @@ jobs:
           CHANNEL_BLACKLIST: ${{ vars.CHANNEL_BLACKLIST || '' }}
           # --- Mode campagne (clips payés à la vue) : créateurs ciblés en priorité ---
           TARGET_STREAMERS_TWITCH: ${{ vars.TARGET_STREAMERS_TWITCH || '' }}
-          TARGET_CHANNELS_KICK: ${{ vars.TARGET_CHANNELS_KICK || '' }}
           TARGET_ONLY: ${{ vars.TARGET_ONLY || 'false' }}
           # --- Rendu ---
           FRAMING: ${{ vars.FRAMING || 'auto' }}

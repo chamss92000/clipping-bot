@@ -171,7 +171,7 @@ SMTP_PASSWORD: str | None = _get("SMTP_PASSWORD")  # mot de passe d'APPLICATION 
 # ---------------------------------------------------------------------------
 # Bloc 1 — Détection (clips GAMING déjà viraux, focus GTA 6)
 # ---------------------------------------------------------------------------
-# Un seul type de contenu : des clips Twitch/Kick DÉJÀ viraux (sélectionnés par
+# Un seul type de contenu : des clips Twitch DÉJÀ viraux (sélectionnés par
 # la communauté), filtrés par JEU. On interroge directement l'API Clips de
 # Twitch par catégorie de jeu (`/clips?game_id=`) : c'est la source la plus
 # fiable et la plus ciblée (tous les streamers du jeu, pas seulement le top live).
@@ -199,7 +199,6 @@ TWITCH_MIN_POOL_PER_LANG: int = _get_int("TWITCH_MIN_POOL_PER_LANG", 12)
 TWITCH_LANGUAGES: list[str] = _get_list("TWITCH_LANGUAGES", ["fr", "en"])
 #: MODE CAMPAGNE (monétisation) : créateurs ciblés en priorité, même hors live.
 TARGET_STREAMERS_TWITCH: list[str] = _get_list("TARGET_STREAMERS_TWITCH", [])  # logins
-TARGET_CHANNELS_KICK: list[str] = _get_list("TARGET_CHANNELS_KICK", [])         # slugs
 #: True = on ne clippe QUE les créateurs ciblés (sinon : ciblés en priorité + jeux).
 TARGET_ONLY: bool = _get_bool("TARGET_ONLY", False)
 #: True = un créateur ciblé est clippé quel que soit son jeu (sinon : jeux suivis only).
@@ -214,18 +213,6 @@ MAX_CLIPS_PER_STREAMER: int = _get_int("MAX_CLIPS_PER_STREAMER", 2)
 DUPLICATE_WINDOW_S: int = _get_int("DUPLICATE_WINDOW_S", 45)
 #: Durée minimale d'un clip source (trop court = pas d'histoire).
 SOURCE_CLIP_MIN_S: int = _get_int("SOURCE_CLIP_MIN_S", 8)
-
-# Kick (API publique non officielle — best-effort, protégé Cloudflare)
-#: Chaînes Kick surveillées (on ne garde que leurs clips sur les jeux suivis).
-KICK_ENABLE: bool = _get_bool("KICK_ENABLE", True)
-KICK_CHANNELS: list[str] = _get_list("KICK_CHANNELS", ["xqc", "trainwreckstv", "adin"])
-#: Chaînes Kick francophones (leurs clips partent dans le marché "fr").
-KICK_FR_CHANNELS: list[str] = _get_list("KICK_FR_CHANNELS", ["kamet0", "amine", "billy"])
-KICK_FEATURED_LIMIT: int = _get_int("KICK_FEATURED_LIMIT", 20)
-KICK_CLIPS_PER_CHANNEL: int = _get_int("KICK_CLIPS_PER_CHANNEL", 10)
-KICK_CLIP_MIN_VIEWS: int = _get_int("KICK_CLIP_MIN_VIEWS", 100)
-#: Fenêtre de tri des clips Kick : day | week | month | all.
-KICK_CLIPS_TIME: str = _get("KICK_CLIPS_TIME", "week")
 
 # --- Filtres qualité de contenu ---
 #: Titres de clips à écarter : retransmissions officielles / contenu recyclé
@@ -391,58 +378,11 @@ TITLE_CARD_MAX_WIDTH: float = _get_float("TITLE_CARD_MAX_WIDTH", 0.84)
 
 
 # ---------------------------------------------------------------------------
-# Bloc 7 — Publication TikTok (API officielle Content Posting — gratuite)
-# ---------------------------------------------------------------------------
-# Mode de publication :
-#   "manual"     -> le pipeline dépose clip + caption sur Drive, tu postes à la main
-#                   (0€, aucun domaine/audit TikTok requis) — DÉFAUT.
-#   "tiktok_api" -> publication auto via l'API officielle TikTok (nécessite
-#                   domaine vérifié + audit pour le public ; voir authorize_tiktok).
-PUBLISH_MODE: str = _get("PUBLISH_MODE", "manual")
-
-# --- Publication auto YouTube Shorts (gratuit, public, sans audit) ---
-# Active l'upload automatique de chaque clip en Short public sur TA chaîne.
-# En plus de la livraison manuelle TikTok (clip + caption sur Drive).
-# DÉSACTIVÉ par défaut : la pipeline se contente de déposer les clips sur Drive
-# (tu publies toi-même sur tes chaînes). Repasse à true pour ré-activer l'auto-upload.
-YOUTUBE_UPLOAD_ENABLE: bool = _get_bool("YOUTUBE_UPLOAD_ENABLE", False)
-# OAuth : réutilise le client GOOGLE_OAUTH_CLIENT_ID/SECRET + un refresh token
-# dédié au scope youtube.upload (obtenu via `authorize_youtube`).
-YOUTUBE_REFRESH_TOKEN: str | None = _get("YOUTUBE_REFRESH_TOKEN")
-YOUTUBE_OAUTH_TOKEN_FILE: str | None = _get("YOUTUBE_OAUTH_TOKEN_FILE", "./youtube_token.json")
-YOUTUBE_PRIVACY: str = _get("YOUTUBE_PRIVACY", "public")  # public | unlisted | private
-YOUTUBE_CATEGORY_ID: str = _get("YOUTUBE_CATEGORY_ID", "20")  # 20 = Gaming
-#: Garde-fou quota : l'upload coûte ~1600 unités (quota /jour = 10000 ⇒ ~6 max).
-YOUTUBE_DAILY_LIMIT: int = _get_int("YOUTUBE_DAILY_LIMIT", 5)
-
-# Upload-Post free ne permet PAS TikTok => on utilise l'API officielle TikTok.
-TIKTOK_CLIENT_KEY: str | None = _get("TIKTOK_CLIENT_KEY")
-TIKTOK_CLIENT_SECRET: str | None = _get("TIKTOK_CLIENT_SECRET")
-TIKTOK_REFRESH_TOKEN: str | None = _get("TIKTOK_REFRESH_TOKEN")
-#: URI de redirection OAuth (doit être EXACTEMENT celle enregistrée dans l'app TikTok).
-TIKTOK_REDIRECT_URI: str = _get("TIKTOK_REDIRECT_URI", "https://localhost:8888/callback")
-#: Niveau de confidentialité du post. Avant audit de l'app, seul SELF_ONLY (privé)
-#: est autorisé ; après audit, passer à PUBLIC_TO_EVERYONE.
-TIKTOK_PRIVACY_LEVEL: str = _get("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
-TIKTOK_DISABLE_COMMENT: bool = _get_bool("TIKTOK_DISABLE_COMMENT", False)
-TIKTOK_DISABLE_DUET: bool = _get_bool("TIKTOK_DISABLE_DUET", False)
-TIKTOK_DISABLE_STITCH: bool = _get_bool("TIKTOK_DISABLE_STITCH", False)
-TIKTOK_API_BASE: str = _get("TIKTOK_API_BASE", "https://open.tiktokapis.com")
-
-#: Quota mensuel qu'on s'impose (l'API officielle n'a pas de coût, mais on borde).
-PUBLISH_MONTHLY_QUOTA: int = _get_int("PUBLISH_MONTHLY_QUOTA", 60)
-#: Heures de pic (heure locale TIMEZONE) où l'on planifie les publications.
-PUBLISH_HOURS: list[int] = [int(h) for h in _get_list("PUBLISH_HOURS", ["18", "19", "20", "21", "22"])]
-PLATFORM_TARGETS: list[str] = _get_list("PLATFORM_TARGETS", ["tiktok"])
-
-
-# ---------------------------------------------------------------------------
 # Bloc 2 — Storage / state
 # ---------------------------------------------------------------------------
 STATE_FILENAME: str = _get("STATE_FILENAME", "state.json")
 LOG_FILENAME: str = _get("LOG_FILENAME", "pipeline.log")
 #: Sous-dossiers logiques créés dans le dossier Drive racine.
-DRIVE_SUBDIR_DOWNLOADS: str = "downloads"
 DRIVE_SUBDIR_CLIPS: str = "clips"
 DRIVE_SUBDIR_LOGS: str = "logs"
 
@@ -454,12 +394,10 @@ DRIVE_SUBDIR_LOGS: str = "logs"
 #: ce dont on a besoin (ex : tester le Bloc 1 sans clés Gemini/Drive).
 REQUIRED_BY_BLOCK: dict[str, list[str]] = {
     "twitch": ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"],
-    "kick": [],  # scraping public, pas de clé
     "detection": ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"],
     "download": [],  # credentials Drive gérées par la vérif dédiée ci-dessous
     "drive": [],     # idem (OAuth : GOOGLE_DRIVE_FOLDER_ID est optionnel)
     "viral": ["GEMINI_API_KEY"],
-    "publish": ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_REFRESH_TOKEN"],
 }
 
 

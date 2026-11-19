@@ -17,7 +17,6 @@ class Platform(str, Enum):
     """Plateforme source d'une vidéo candidate."""
 
     TWITCH = "twitch"
-    KICK = "kick"
 
 
 def _utcnow_iso() -> str:

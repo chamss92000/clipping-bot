@@ -44,7 +44,7 @@ def main(argv: list[str]) -> int:
     except settings.ConfigError as exc:
         print(f"[config] {exc}", file=sys.stderr)
         # On continue quand même : detect_all skippe proprement les sources
-        # dont la config manque (utile pour tester Kick seul, par ex.).
+        # dont la config manque.
 
     candidates = detect_all(enabled=enabled)
 

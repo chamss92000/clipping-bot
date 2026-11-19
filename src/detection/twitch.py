@@ -154,7 +154,7 @@ def _paged_clips(params: dict, pages: int) -> list[dict]:
 
 
 def clip_trend_score(views: int, created_at: str | None) -> float:
-    """Score 0-100 : vélocité (vues/heure) + petit bonus volume. Commun Twitch/Kick."""
+    """Score 0-100 : vélocité (vues/heure) + petit bonus volume."""
     age_h = 24.0
     if created_at:
         try:
