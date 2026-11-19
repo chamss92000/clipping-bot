@@ -1,7 +1,6 @@
-"""Bloc 1 — Détection des clips gaming viraux (Twitch + Kick), focus GTA 6.
+"""Bloc 1 — Détection des clips gaming viraux (Twitch), focus GTA 6.
 
-Point d'entrée : `detect_all()` qui interroge les sources en isolation (l'échec
-d'une source ne casse jamais l'autre), filtre, dédoublonne et trie.
+Point d'entrée : `detect_all()` qui interroge la source, filtre, dédoublonne et trie.
 
 Étapes de qualité (dans l'ordre) :
   1. filtre titre/chaîne (retransmissions esport, contenu recyclé) ;
@@ -18,7 +17,7 @@ from config import settings
 from src.models import Platform, VideoCandidate
 from src.utils.logging import get_logger
 
-from . import kick, twitch
+from . import twitch
 
 log = get_logger("detection")
 
@@ -27,7 +26,6 @@ LAST_REJECTED: list[tuple[VideoCandidate, str]] = []
 
 _SOURCES = {
     Platform.TWITCH: twitch.detect,
-    Platform.KICK: kick.detect,
 }
 
 
@@ -37,13 +35,7 @@ def market_of(c: VideoCandidate) -> str:
     Sert à router le clip vers le bon dossier Drive (=> la bonne chaîne).
     """
     lang = (c.extra.get("language") or "").lower()
-    if lang:
-        return "fr" if lang.startswith("fr") else "intl"
-    if c.platform == Platform.KICK:
-        who = (c.extra.get("slug") or c.creator or "").lower()
-        fr_set = {s.lower() for s in settings.KICK_FR_CHANNELS}
-        return "fr" if who in fr_set else "intl"
-    return "intl"
+    return "fr" if lang.startswith("fr") else "intl"
 
 
 def _is_low_quality(c: VideoCandidate) -> str | None:
@@ -160,4 +152,4 @@ def detect_all(
     return ranked
 
 
-__all__ = ["detect_all", "market_of", "dedupe_moments", "cap_per_creator", "twitch", "kick"]
+__all__ = ["detect_all", "market_of", "dedupe_moments", "cap_per_creator", "twitch"]

@@ -1,4 +1,4 @@
-from src.publisher.tiktok import build_caption
+from src.publisher.caption import build_caption
 from src.transcription.whisper_transcribe import Word
 from src.viral.gemini import (
     clamp_trim, clean_hook, fallback_hook, has_first_person, hook_problems,
@@ -18,12 +18,15 @@ def test_first_person_fr_en():
 
 def test_clean_hook():
     assert clean_hook('"Il casse GTA 6" 😱 #gta6.') == "Il casse GTA 6"
+    assert clean_hook("Attends la fin…") == "Attends la fin…"
+    assert clean_hook("Rockstar doit patcher ça !") == "Rockstar doit patcher ça !"
 
 
 def test_hook_problems():
     assert hook_problems("Il vole un jet dans GTA 6", "fr") == []
     assert "1re personne" in hook_problems("Je vole un jet", "fr")
-    assert "début interdit" in hook_problems("Le pire bug de GTA 6", "fr")
+    # superlatifs autorisés (titres putaclic)
+    assert hook_problems("Le pire bug de GTA 6", "fr") == []
     assert hook_problems("Mot", "fr")  # trop court
 
 

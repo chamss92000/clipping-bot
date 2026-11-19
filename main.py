@@ -1,20 +1,20 @@
 """Orchestrateur du pipeline de clipping gaming (focus GTA 6).
 
 Point d'entrée unique lancé par GitHub Actions (cron) ET en local.
-Pour chaque clip viral détecté (Twitch/Kick, jeux suivis) :
+Pour chaque clip viral détecté (Twitch, jeux suivis) :
 
     téléchargement → brief LLM multimodal (note, recadrage, titre, légende)
     → [note trop basse : clip écarté] → on garde les MIEUX NOTÉS du cycle
     → transcription (sous-titres) → recadrage 9:16 + sous-titres + titre
-    → dépôt Drive (+ publication)
+    → dépôt Drive + rapport (légendes prêtes à copier) + e-mail
 
 État persistant sur Drive (state.json) : déduplication des clips déjà traités,
-historique des titres (anti-répétition), quotas de publication.
+historique des titres (anti-répétition), briefs en cache.
 
 Usage :
     python main.py                 # cycle complet
     python main.py --detect-only   # s'arrête après la détection (dump local)
-    DRY_RUN=true python main.py    # tout sauf la publication réelle
+    DRY_RUN=true python main.py    # tout, sans e-mail
 """
 
 from __future__ import annotations
@@ -73,8 +73,7 @@ def _brief_clip(cand, state, market: str, recent: list[str]):
     """Télécharge + fait noter un clip. Retourne (brief, DownloadResult | None).
 
     Un brief déjà en cache (clip bien noté mais pas monté au cycle précédent)
-    est réutilisé sans téléchargement ni appel LLM. Lève BotCheckError si la
-    plateforme bloque.
+    est réutilisé sans téléchargement ni appel LLM.
     """
     from src.downloader.download import download
     from src.viral.gemini import ClipBrief, analyze_clip
@@ -104,7 +103,7 @@ def _render_clip(cand, brief, dl, storage, state, market: str, clip_root: str | 
     from src.editing.clip import make_vertical_clip
     from src.editing.subtitles import build_ass, burn_subtitles
     from src.editing.title_card import render_title, title_center_y
-    from src.publisher.tiktok import build_caption, next_publish_slot, publish
+    from src.publisher.caption import build_caption
     from src.transcription.whisper_transcribe import transcribe
     from src.viral.gemini import snap_to_words
 
@@ -170,29 +169,13 @@ def _render_clip(cand, brief, dl, storage, state, market: str, clip_root: str | 
             "duration_s": round(end - start, 1),
         }
 
-        # --- Livraison -------------------------------------------------------
+        # --- Livraison : Drive (tu postes à la main avec la légende du rapport) --
         try:
             storage.upload(final_clip, final_clip.name, subdir=settings.DRIVE_SUBDIR_CLIPS, root=clip_root)
         except Exception as exc:  # noqa: BLE001
             log.warning("  Upload Drive échoué : %s", exc)
-        if settings.PUBLISH_MODE == "manual":
-            record["status"] = "ready_manual"
-            if settings.YOUTUBE_UPLOAD_ENABLE and state.youtube_left() > 0:
-                try:
-                    from src.publisher.youtube import upload_short
-
-                    yt = upload_short(final_clip, brief.hook, brief.hashtags, creator=cand.creator)
-                    record["youtube"] = yt.status
-                    if yt.status == "posted":
-                        state.record_youtube_upload()
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("  Upload YouTube échoué : %s", exc)
-                    record["youtube"] = "failed"
-        else:
-            res = publish(final_clip, caption, [], schedule_at=next_publish_slot())
-            record.update(status=res.status, post_id=res.post_id)
-            if res.status in ("posted", "scheduled"):
-                state.record_upload()
+            return "failed"
+        record["status"] = "ready_manual"
 
         state.published.append(record)
         log.info("  ✅ Clip [%s] prêt (note %s) : %s — « %s »", market,
@@ -249,8 +232,6 @@ def run(detect_only: bool = False) -> int:
     #           non retenus gardent leur brief en cache pour le cycle suivant.
     import time
 
-    from src.downloader.download import BotCheckError, is_bot_check
-
     now = time.time()
     state.briefs = {u: b for u, b in state.briefs.items() if now - b.get("ts", 0) < 4 * 86400}
 
@@ -262,7 +243,6 @@ def run(detect_only: bool = False) -> int:
     published_before = len(state.published)
     chosen: list = []
     llm_rejected: list[tuple] = []
-    blocked_platforms: set = set()
 
     for cand in candidates:  # ---------------- Phase A : noter ----------------
         if all(len(shortlist[mk]) >= want[mk] for mk in targets):
@@ -270,7 +250,7 @@ def run(detect_only: bool = False) -> int:
         if attempts >= settings.MAX_SOURCE_ATTEMPTS_PER_RUN:
             log.warning("Limite d'essais atteinte (%d).", attempts)
             break
-        if state.is_processed(cand.uid) or cand.platform in blocked_platforms:
+        if state.is_processed(cand.uid):
             continue
         market = market_of(cand)
         if market not in targets or len(shortlist[market]) >= want[market]:
@@ -287,15 +267,9 @@ def run(detect_only: bool = False) -> int:
         try:
             brief, dl = _brief_clip(cand, state, market, recent)
         except Exception as exc:  # noqa: BLE001 - isole la panne d'un clip
-            if isinstance(exc, BotCheckError) or is_bot_check(exc):
-                blocked_platforms.add(cand.platform)
-                attempts -= 1
-                log.warning("  %s bloque (anti-bot) — plateforme abandonnée pour ce cycle.",
-                            cand.platform.value)
-            else:
-                log.error("  Échec %s : %s", cand.uid, exc)
-                if state.record_failure(cand.uid) >= settings.MAX_SOURCE_FAILURES:
-                    state.mark_processed(cand.uid)
+            log.error("  Échec %s : %s", cand.uid, exc)
+            if state.record_failure(cand.uid) >= settings.MAX_SOURCE_FAILURES:
+                state.mark_processed(cand.uid)
             continue
 
         if brief.score is None and settings.REQUIRE_LLM:
@@ -343,6 +317,8 @@ def run(detect_only: bool = False) -> int:
                 state.mark_processed(cand.uid)
             storage.save_state(state)  # sauvegarde incrémentale (résilience)
     log.info("Clips produits : %s", produced)
+    state.trim()
+    storage.save_state(state)
 
     # --- Nettoyage : purge des clips > N heures (garde de la place) ---------
     if settings.DRIVE_CLEANUP_MAX_AGE_H > 0:

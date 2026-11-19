@@ -1,6 +1,6 @@
 """Bloc 2 — Téléchargement des clips via yt-dlp.
 
-Les clips Twitch/Kick sont courts (≤ 60 s) : on télécharge toujours le clip
+Les clips Twitch sont courts (≤ 60 s) : on télécharge toujours le clip
 entier, plafonné à DOWNLOAD_MAX_HEIGHT (1080p suffit pour un rendu 1080x1920).
 
   * `download(candidate, dest_dir)` -> `DownloadResult` (chemin + métadonnées réelles)
@@ -26,23 +26,6 @@ log = get_logger("downloader")
 
 class DownloadError(RuntimeError):
     pass
-
-
-class BotCheckError(DownloadError):
-    """La plateforme bloque le runner (anti-bot / Cloudflare) : inutile
-    d'insister sur cette plateforme pendant ce cycle."""
-
-
-def is_bot_check(exc: BaseException | None) -> bool:
-    """Détecte un blocage anti-bot en remontant la chaîne des causes."""
-    seen = 0
-    while exc is not None and seen < 6:
-        msg = str(exc).lower()
-        if any(k in msg for k in ("not a bot", "sign in to confirm", "cloudflare", "http error 403")):
-            return True
-        exc = exc.__cause__ or exc.__context__
-        seen += 1
-    return False
 
 
 @dataclass
@@ -107,19 +90,11 @@ def _resolve_output_path(info: dict, dest_dir: Path) -> Path:
 
 
 def download(candidate: VideoCandidate, dest_dir: str | Path) -> DownloadResult:
-    """Télécharge un clip et retourne ses métadonnées réelles.
-
-    Lève `BotCheckError` si la plateforme bloque, `DownloadError` sinon.
-    """
+    """Télécharge un clip et retourne ses métadonnées réelles (DownloadError sinon)."""
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     log.info("Téléchargement %s", candidate.uid)
-    try:
-        info = _run_ydl(candidate.url, _ydl_opts(dest_dir))
-    except Exception as exc:  # noqa: BLE001
-        if is_bot_check(exc):
-            raise BotCheckError(f"{candidate.platform.value} bloque le téléchargement : {exc}") from exc
-        raise
+    info = _run_ydl(candidate.url, _ydl_opts(dest_dir))
     path = _resolve_output_path(info, dest_dir)
     duration, width, height = probe_media(path)
     if duration <= 0 or width <= 0 or height <= 0:
@@ -134,9 +109,8 @@ if __name__ == "__main__":  # python -m src.downloader.download <url>
     from src.models import Platform
 
     if len(sys.argv) < 2:
-        print("usage: python -m src.downloader.download <url_du_clip>")
+        print("usage: python -m src.downloader.download <url_du_clip_twitch>")
         raise SystemExit(2)
-    url = sys.argv[1]
-    plat = Platform.TWITCH if "twitch" in url else Platform.KICK
-    cand = VideoCandidate(platform=plat, source_id="test", url=url, title="test", creator="test")
+    cand = VideoCandidate(platform=Platform.TWITCH, source_id="test", url=sys.argv[1],
+                          title="test", creator="test")
     print(download(cand, settings.DOWNLOAD_DIR))

@@ -1,23 +1,24 @@
 # clipping-bot — clips gaming, focus GTA 6
 
 Pipeline de clipping **100 % automatisé, budget 0 €**, centré sur **un seul type
-de contenu** : les clips gaming déjà viraux (Twitch / Kick), en priorité sur
-**GTA 6**. Il récupère les meilleurs moments du jour, les fait juger par une IA
-qui **regarde** le clip, les remonte en 9:16 avec sous-titres animés et titre
-d'accroche, puis les dépose sur Google Drive (ou publie sur TikTok).
+de contenu** : les clips gaming déjà viraux de Twitch, en priorité sur **GTA 6**.
+Il récupère les meilleurs moments du jour, les fait juger par une IA qui
+**regarde** le clip, les remonte en 9:16 avec sous-titres animés et titre
+putaclic, puis les dépose sur Google Drive avec la légende prête à copier.
+Tu postes à la main sur TikTok.
 Tourne sur **GitHub Actions** (2 runs/jour) et persiste son état sur Drive.
 
 ## Pipeline
 
 | Étape | Rôle | Stack |
 |------|------|-------|
-| 1. Détection | Clips les plus vus **par jeu** (API Clips Twitch `game_id`) + chaînes Kick filtrées par jeu. Anti-doublon de moment, max N clips/streamer | Twitch Helix, Kick (best-effort) |
+| 1. Détection | Clips les plus vus **par jeu** (API Clips Twitch `game_id`), seuil de vues adaptatif, anti-doublon de moment, max N clips/streamer | Twitch Helix |
 | 2. Téléchargement | Clip entier ≤ 1080p | yt-dlp |
-| 3. Brief IA | Gemini **regarde** le clip (vidéo 360p + son) : note 0-100, recadrage (coupe le début mou), 3 titres de formules différentes, légende SEO, hashtags | Gemini Flash (gratuit), chaîne de repli |
-| 4. Filtre | Note < `CLIP_MIN_SCORE` => clip écarté (avant la transcription : 0 temps perdu) | — |
+| 3. Brief IA | Gemini **regarde** le clip (vidéo 360p + son) : note 0-100, recadrage (coupe le début mou), 3 titres putaclic de leviers différents, légende SEO, hashtags | Gemini Flash (gratuit), chaîne de repli |
+| 4. Sélection | Note < `CLIP_MIN_SCORE` => écarté ; on note jusqu'à 6 clips par chaîne et on ne monte que les 3 meilleurs. Clip non noté = jamais publié | — |
 | 5. Sous-titres | Transcription mot à mot, VAD anti-hallucination, vocabulaire GTA | faster-whisper `large-v3-turbo` (local) |
 | 6. Montage | 9:16 auto (facecam+gameplay / visage / fond flou), sous-titres karaoké, titre animé | FFmpeg, MediaPipe, Pillow |
-| 7. Livraison | Drive (dossier FR / intl) + rapport + e-mail, ou TikTok API / YouTube Shorts | Drive API |
+| 7. Livraison | Drive (dossier FR / intl) + `rapport.md` (légendes) + e-mail | Drive API, SMTP |
 
 ## Choisir les jeux
 
@@ -52,18 +53,17 @@ python main.py --detect-only            # idem + dump work/candidates.json
 python -m src.downloader.download <url_du_clip>
 python -m src.viral.gemini clip.mp4 "Grand Theft Auto VI" fr   # brief IA d'un clip local
 python -m src.editing.title_card "Il vole un jet dans GTA 6"
-DRY_RUN=true python main.py             # cycle complet sans publier
+DRY_RUN=true python main.py             # cycle complet, sans e-mail
 ```
 
 ## Secrets GitHub Actions
 
 `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `GEMINI_API_KEY` (gratuit sur
 aistudio.google.com), `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
-`GOOGLE_OAUTH_REFRESH_TOKEN` ; optionnels : `TIKTOK_*`, `YOUTUBE_REFRESH_TOKEN`,
-`SMTP_USER`, `SMTP_PASSWORD`.
+`GOOGLE_OAUTH_REFRESH_TOKEN` ; pour l'e-mail : `SMTP_USER`, `SMTP_PASSWORD`
+(+ variable `NOTIFY_EMAIL_TO`).
 
-Auth OAuth (une fois, en local) : `python -m src.storage.authorize` (Drive),
-`python -m src.publisher.authorize_tiktok`, `python -m src.publisher.authorize_youtube`.
+Auth Drive (une fois, en local) : `python -m src.storage.authorize`.
 
 ## Modèles IA (gratuits)
 

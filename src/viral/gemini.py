@@ -113,30 +113,33 @@ Contexte du clip :
    mais garde la mise en place nécessaire pour comprendre. Clip final entre {clip_min} et
    {clip_max} s. Si tout est bon, renvoie start=0 et end={duration:.0f}.
 
-4) `hooks` : 3 TITRES d'accroche affichés EN GROS sur la vidéo, chacun d'une formule
-   DIFFÉRENTE (indique-la dans `formula`). Règles pour CHAQUE titre :
-   - {lang_rule}
-   - 3 à 7 mots, 45 caractères max : court = affiché plus gros = plus lisible.
-   - SPÉCIFIQUE à CE clip : cite un élément concret VU ou ENTENDU (véhicule, lieu, perso,
-     arme, chiffre, ce que fait le streamer). Un titre qui marcherait pour n'importe quel
-     clip est un MAUVAIS titre.
-   - crée un manque (curiosity gap) SANS spoiler la chute.
-   - tu es le clippeur qui commente de l'extérieur : 3e personne ou tournure neutre.
-     INTERDIT : je, j', moi, mon, ma, mes, on, nous / I, I'm, my, me, we, us.
-   - pas de guillemets, pas d'emoji, pas de point final ("?" autorisé).
+4) `hooks` : 3 TITRES PUTACLIC affichés EN GROS sur la vidéo. Leur seul but : que le
+   pouce S'ARRÊTE et que la personne regarde jusqu'au bout. Chaque titre utilise un levier
+   DIFFÉRENT (indique-le dans `formula`) :
+   · exagération / superlatif assumé ("Le bug le plus illégal de GTA 6")
+   · choc / indignation ("Rockstar doit patcher ça d'urgence")
+   · mystère / manque ("Personne n'a vu ce qui arrive à la fin")
+   · défi au viewer ("99% des joueurs ratent ce détail", "Attends la fin…")
+   · enjeu énorme / chiffre ("Il perd 2 millions en 3 secondes")
+   · réaction ("Sa tête quand la police débarque")
+   · POV / identification ("POV : tu lances GTA 6 pour la 1re fois")
+   Règles pour CHAQUE titre :
+   - {lang_rule} ; ton de TikTok, familier et direct, pas journalistique.
+   - 3 à 8 mots, 50 caractères max : court = affiché plus gros = plus lisible.
+   - accroché à un élément RÉEL du clip (action, véhicule, lieu, perso, réaction) : on
+     EXAGÈRE ce qui se passe, on n'INVENTE pas ce qui ne se passe pas (sinon les viewers
+     se sentent arnaqués, swipent et l'algo coule la vidéo).
+   - ne révèle JAMAIS la chute : on promet, la vidéo délivre.
+   - tu es le clippeur qui commente de l'extérieur : 3e personne, "tu" (POV) ou tournure
+     neutre. INTERDIT : je, j', moi, mon, ma, mes, on, nous / I, I'm, my, me, we, us.
+   - pas de guillemets, pas d'emoji ; fin en "?", "!" ou "…" autorisée.
    - mettre "{game_short}" dans le titre quand c'est naturel (les gens cherchent "{game_short}").
-   - N'INVENTE RIEN : ne cite un lieu, un perso ou un jeu que si tu l'as réellement vu ou
-     entendu. La catégorie du stream peut être fausse : si ce que tu vois n'est PAS
-     {game_short} (autre jeu, serveur RP d'un autre GTA, réaction, discussion…), dis-le dans
-     `what_happens` et n'écris ni "{game_short}" ni ses lieux/persos dans le titre.
-   Formules possibles : POV · question intrigante · "Quand…" · contraste ("Il pensait que…") ·
-   chiffre concret · découverte ("Ce détail caché de…") · pseudo du streamer + situation ·
-   réaction ("Sa réaction quand…").
-   INTERDIT : commencer par Le/La pire, Le/La meilleur(e), Worst, Best ; superlatifs creux
-   ("de l'histoire", "ever", "INCROYABLE") sauf si c'est littéralement le sujet.
+   - la catégorie du stream peut être fausse : si ce que tu vois n'est PAS {game_short}
+     (autre jeu, serveur RP d'un autre GTA, discussion…), dis-le dans `what_happens` et
+     n'écris ni "{game_short}" ni ses lieux/persos dans le titre.
    Titres récents de la chaîne — ne reprends NI leur structure NI leurs premiers mots :
 {avoid}
-   `best` = index (0, 1 ou 2) du titre qui fera le plus de vues.
+   `best` = index (0, 1 ou 2) du titre le plus irrésistible à cliquer.
 
 5) `description` : 1 phrase (max 150 caractères), {lang_short}, naturelle, avec les mots-clés
    que les gens tapent dans la recherche ({game_short}, le pseudo, le lieu/l'action). Sans hashtag.
@@ -170,8 +173,8 @@ _FIRST_PERSON = {
 #: Mots d'ouverture qui signent une FORMULE : deux titres qui commencent pareil
 #: ("Quand…", "POV…") donnent l'effet "template" que l'algo et les viewers repèrent.
 _OPENERS = {"quand", "pov", "when", "sa", "his", "her", "personne", "nobody",
-            "ce", "cette", "this", "comment", "how", "attendez", "wait"}
-_BANNED_START = re.compile(r"^(le|la|les)\s+(pire|meilleure?s?)\b|^(worst|best)\b", re.IGNORECASE)
+            "ce", "cette", "this", "comment", "how", "attendez", "attends", "wait",
+            "99", "rockstar"}
 _EMOJI = re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF‍️]+"
 )
@@ -186,7 +189,8 @@ def clean_hook(text: str) -> str:
     t = _EMOJI.sub("", text or "")
     t = re.sub(r"[\"«»“”]", "", t)
     t = re.sub(r"#\w+", "", t)  # pas de hashtag dans le titre affiché
-    t = " ".join(t.split()).strip(" .,;:-–—")
+    t = " ".join(t.split()).strip(" ,;:-–—")
+    t = re.sub(r"(?<![.…])\.$", "", t).rstrip(" ,;:-–—")  # point final retiré, "…" gardé
     return t
 
 
@@ -217,12 +221,10 @@ def hook_problems(hook: str, lang: str | None, recent: list[str] | None = None) 
     n = len(hook.split())
     if n < 2 or n > 9:
         problems.append(f"{n} mots")
-    if len(hook) > 60:
+    if len(hook) > 65:
         problems.append(f"{len(hook)} caractères")
     if has_first_person(hook, lang):
         problems.append("1re personne")
-    if _BANNED_START.search(hook):
-        problems.append("début interdit")
     if recent and too_similar(hook, recent):
         problems.append("trop proche d'un titre récent")
     return problems
@@ -448,7 +450,7 @@ def analyze_clip(
                 if proxy:
                     contents.append(types.Part.from_bytes(data=proxy.read_bytes(), mime_type="video/mp4"))
             contents.append(prompt)
-            brief, model = _generate(contents, temperature=0.8)
+            brief, model = _generate(contents, temperature=0.95)
         _chain_failures = 0
     except Exception as exc:  # noqa: BLE001 - le clip passe quand même, titre de secours
         _chain_failures += 1

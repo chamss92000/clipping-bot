@@ -1,1 +1,1 @@
-"""Bloc 7 — Publication TikTok (Upload-Post + fallback API officielle)."""
+"""Livraison : légende prête à copier (les clips sont postés à la main depuis Drive)."""
